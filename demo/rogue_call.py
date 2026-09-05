@@ -21,6 +21,7 @@ ROGUE_PAYLOAD_BYTES = 4_096
 
 
 def main() -> int:
+    """Make one connection to an unauthorised address."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", required=True,
                         help="the unauthorised address, as listed in asn_map.json")

@@ -32,10 +32,12 @@ class Inventory:
     """Devices resolved to their capacity, vendor, and corporate parent."""
 
     def __init__(self, records: dict[str, dict]):
+        """Wrap an already-parsed mapping of device identifier to record."""
         self.records = records
 
     @classmethod
     def load(cls, path: str) -> "Inventory":
+        """Read an inventory file, ignoring comment keys."""
         with open(path) as handle:
             document = json.load(handle)
 
@@ -51,12 +53,14 @@ class Inventory:
         return self.records.get(subject)
 
     def capacity_mw(self, subject: str) -> float:
+        """Capacity behind a device, or a nominal value if it is unknown."""
         record = self.lookup(subject)
         if record is None:
             return UNKNOWN_DEVICE_MW
         return float(record.get("capacity_mw", UNKNOWN_DEVICE_MW))
 
     def total_mw(self) -> float:
+        """Capacity of every device in the inventory."""
         total = 0.0
         for record in self.records.values():
             total += float(record.get("capacity_mw", 0.0))

@@ -29,6 +29,7 @@ TELEMETRY_BYTES = (1_200, 8_000)
 
 
 def main() -> int:
+    """Send heartbeats and periodic telemetry until interrupted."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", required=True, help="vendor cloud address")
     parser.add_argument("--port", type=int, default=8443)

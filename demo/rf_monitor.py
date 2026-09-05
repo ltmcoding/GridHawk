@@ -27,7 +27,7 @@ from collectors.rf import (
     analyse_sweep, carriers_from_sweeps, save_baseline, load_baseline,
 )
 from correlate.inventory import Inventory, enrich, rank
-from sinks.webhook import AlertSink
+from sinks.webhook import AlertSink, frequency_identity
 
 
 DEFAULT_NOMINAL_HZ = 433_920_000.0
@@ -40,9 +40,12 @@ DEFAULT_INTEGRATION_S = 1.0
 
 DEFAULT_BASELINE_SWEEPS = 12
 
-# Alerts repeat every sweep while a rogue keeps transmitting. Hold off on
-# re-alerting about the same frequency for this long.
+# A rogue transmitting continuously appears on every sweep. Report it once,
+# then hold off, or it buries everything else on the dashboard.
 ALERT_REPEAT_SUPPRESSION_S = 20.0
+
+# Two measurements of one carrier land a little apart every sweep, so alerts
+# are grouped into buckets this wide before deciding they are "the same".
 SAME_EMITTER_TOLERANCE_HZ = 3_000.0
 
 
@@ -54,12 +57,12 @@ def _sweep_source(args, max_sweeps=None):
     way -- only where the sweeps come from changes.
     """
     if args.replay:
-        print(f"REPLAY MODE -- sweeps from {args.replay} (no radio in use)\n")
         source = rf_live.replay_sweeps(args.replay, loop=max_sweeps is None)
         if max_sweeps is None:
             return source
 
         def limited():
+            """Stop the looping replay after the requested number of sweeps."""
             for index, sweep in enumerate(source):
                 if index >= max_sweeps:
                     return
@@ -78,11 +81,13 @@ def _replay_pace(args) -> None:
 
 
 def _band_edges(nominal_hz: float, span_hz: float) -> tuple[float, float]:
+    """Low and high edges of the span to sweep, centred on nominal."""
     half = span_hz / 2.0
     return nominal_hz - half, nominal_hz + half
 
 
 def _describe(carrier: dict, nominal_hz: float) -> str:
+    """One carrier as a console line: frequency, power, and crystal error."""
     megahertz = carrier["freq_hz"] / 1e6
     return (f"{megahertz:.6f} MHz  {carrier['power_db']:+6.1f} dB  "
             f"{carrier['ppm']:+8.2f} ppm")
@@ -90,10 +95,13 @@ def _describe(carrier: dict, nominal_hz: float) -> str:
 
 def run_baseline(args) -> int:
     """Record where the authorised radio actually transmits."""
-    low_hz, high_hz = _band_edges(args.nominal, args.span)
-    print(f"Baselining {args.sweeps} sweeps across "
-          f"{low_hz/1e6:.4f}-{high_hz/1e6:.4f} MHz")
-    print("Only the AUTHORISED radio should be transmitting right now.\n")
+    if args.replay:
+        print(f"Baselining {args.sweeps} sweeps from {args.replay} (REPLAY MODE)\n")
+    else:
+        low_hz, high_hz = _band_edges(args.nominal, args.span)
+        print(f"Baselining {args.sweeps} sweeps across "
+              f"{low_hz/1e6:.4f}-{high_hz/1e6:.4f} MHz")
+        print("Only the AUTHORISED radio should be transmitting right now.\n")
 
     sweeps = []
     for sweep in _sweep_source(args, max_sweeps=args.sweeps):
@@ -119,6 +127,20 @@ def run_baseline(args) -> int:
     return 0
 
 
+def _print_sweep(sweep_number: int, observation, nominal_hz: float) -> None:
+    """Show what this sweep saw, so the audience can follow along."""
+    carriers = observation.fields["carriers"]
+    unaccounted = observation.fields.get("n_unknown", 0)
+
+    summary = f"sweep {sweep_number:>4}  carriers={len(carriers)}"
+    if unaccounted:
+        summary += f"  UNACCOUNTED={unaccounted}"
+    print(summary)
+
+    for carrier in carriers:
+        print(f"      {_describe(carrier, nominal_hz)}")
+
+
 def run_monitor(args) -> int:
     """Watch the band and alert on anything that is not the baselined radio."""
     if not os.path.exists(args.baseline_file):
@@ -138,16 +160,21 @@ def run_monitor(args) -> int:
         print(f"Inventory: {len(inventory.records)} device(s), "
               f"{inventory.total_mw():.3f} MW total")
 
-    sink = AlertSink(args.alert_url, source_name="pi-rf-monitor")
+    sink = AlertSink(args.alert_url, source_name="pi-rf-monitor",
+                     suppress_repeats_for=ALERT_REPEAT_SUPPRESSION_S,
+                     identity_of=frequency_identity(SAME_EMITTER_TOLERANCE_HZ))
     if args.alert_url:
         print(f"Alerts -> {args.alert_url}")
     else:
         print("Alerts -> console only (pass --alert-url to post them)")
 
-    low_hz, high_hz = _band_edges(args.nominal, args.span)
-    print(f"Monitoring {low_hz/1e6:.4f}-{high_hz/1e6:.4f} MHz. Ctrl-C to stop.\n")
+    if args.replay:
+        print("REPLAY MODE -- sweeps read from a recording, no radio in use.")
+    else:
+        low_hz, high_hz = _band_edges(args.nominal, args.span)
+        print(f"Monitoring {low_hz/1e6:.4f}-{high_hz/1e6:.4f} MHz.")
+    print("Ctrl-C to stop.\n")
 
-    last_alert_time: dict[float, float] = {}
     sweep_number = 0
 
     try:
@@ -162,43 +189,22 @@ def run_monitor(args) -> int:
                 known=known,
             )
 
-            carriers = observation.fields["carriers"]
-            unknown_count = observation.fields.get("n_unknown", 0)
-            summary = f"sweep {sweep_number:>4}  carriers={len(carriers)}"
-            if unknown_count:
-                summary += f"  UNACCOUNTED={unknown_count}"
-            print(summary)
-            for carrier in carriers:
-                print(f"      {_describe(carrier, args.nominal)}")
+            _print_sweep(sweep_number, observation, args.nominal)
 
             if inventory is not None and findings:
                 findings = rank(enrich(findings, inventory))
 
-            for finding in findings:
-                frequency = finding.detail["freq_hz"]
-
-                # Suppress repeats about the same carrier so a continuously
-                # transmitting rogue does not flood the dashboard.
-                suppressed = False
-                for seen_frequency, seen_time in list(last_alert_time.items()):
-                    if abs(seen_frequency - frequency) <= SAME_EMITTER_TOLERANCE_HZ:
-                        if time.time() - seen_time < ALERT_REPEAT_SUPPRESSION_S:
-                            suppressed = True
-                        else:
-                            del last_alert_time[seen_frequency]
-                        break
-
-                if not suppressed:
-                    sink.send(finding)
-                    last_alert_time[frequency] = time.time()
+            sink.send_all(findings)
 
     except KeyboardInterrupt:
         print(f"\nstopped after {sweep_number} sweeps; "
-              f"{sink.sent_count} alert(s) delivered, {sink.failed_count} failed")
+              f"{sink.sent_count} alert(s) delivered, {sink.failed_count} failed, "
+              f"{sink.suppressed_count} suppressed as repeats")
     return 0
 
 
 def main() -> int:
+    """Parse arguments and run the requested mode."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=["baseline", "monitor"])
     parser.add_argument("--baseline-file", default="demo/baseline.json")

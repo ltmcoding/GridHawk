@@ -31,29 +31,41 @@ SEVERITY_COLOURS = {
 received_alerts: list[dict] = []
 
 
-def _render_page() -> bytes:
-    rows = []
-    for alert in reversed(received_alerts):
-        severity = alert.get("severity", "info")
-        colour = SEVERITY_COLOURS.get(severity, SEVERITY_COLOURS["info"])
+def _format_detail(detail: dict) -> str:
+    """Flatten a finding's detail into one readable line.
 
-        detail = alert.get("detail", {})
-        detail_parts = []
-        for key, value in sorted(detail.items()):
-            if isinstance(value, (dict, list)):
-                continue
-            detail_parts.append(f"{html.escape(str(key))}={html.escape(str(value))}")
-        detail_text = "  ".join(detail_parts)
+    Nested values are skipped: the table needs a single line per alert, and a
+    projector at the back of a room cannot read a wrapped JSON blob.
+    """
+    parts = []
+    for key, value in sorted(detail.items()):
+        if isinstance(value, (dict, list)):
+            continue
+        parts.append(f"{html.escape(str(key))}={html.escape(str(value))}")
+    return "  ".join(parts)
 
-        rows.append(f"""
+
+def _render_row(alert: dict) -> str:
+    """One table row for one alert."""
+    severity = alert.get("severity", "info")
+    colour = SEVERITY_COLOURS.get(severity, SEVERITY_COLOURS["info"])
+
+    return f"""
         <tr>
           <td class="time">{html.escape(alert.get('received_at', ''))}</td>
           <td><span class="sev" style="background:{colour}">{html.escape(severity)}</span></td>
           <td class="kind">{html.escape(str(alert.get('kind', '')))}</td>
           <td class="src">{html.escape(str(alert.get('source', '')))}</td>
           <td class="subj">{html.escape(str(alert.get('subject', '')))}</td>
-          <td class="detail">{detail_text}</td>
-        </tr>""")
+          <td class="detail">{_format_detail(alert.get('detail', {}))}</td>
+        </tr>"""
+
+
+def _render_page() -> bytes:
+    """The whole dashboard. Newest alerts first, since those are the news."""
+    rows = []
+    for alert in reversed(received_alerts):
+        rows.append(_render_row(alert))
 
     if not rows:
         rows.append("""
@@ -100,12 +112,15 @@ def _render_page() -> bytes:
 
 
 class AlertHandler(BaseHTTPRequestHandler):
+    """Accepts POSTed findings and serves the dashboard."""
+
     protocol_version = "HTTP/1.1"
 
     def log_message(self, format_string, *args):
-        pass        # keep the console clear for the demo
+        """Silence the default request log, so the console shows only alerts."""
 
     def _respond(self, status: int, body: bytes, content_type: str) -> None:
+        """Send one complete response."""
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
@@ -113,6 +128,11 @@ class AlertHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
+        """Receive a finding from a monitor.
+
+        Stamps its own arrival time rather than trusting the sender's clock,
+        which is not synchronised with this machine's.
+        """
         length = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(length)
 
@@ -133,6 +153,7 @@ class AlertHandler(BaseHTTPRequestHandler):
         self._respond(200, b'{"ok":true}', "application/json")
 
     def do_GET(self):
+        """Serve the dashboard, or the raw alert list as JSON."""
         if self.path.startswith("/alerts.json"):
             body = json.dumps(received_alerts).encode("utf-8")
             self._respond(200, body, "application/json")
@@ -141,6 +162,7 @@ class AlertHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    """Run the receiver until interrupted."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bind", default="0.0.0.0",
                         help="0.0.0.0 so the Pi on the LAN can reach it")

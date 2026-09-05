@@ -44,6 +44,7 @@ ROGUE_IP = "192.168.1.60"
 
 
 def make_rf_recordings() -> None:
+    """Four sweeps covering every beat of the RF act."""
     board_a = Emitter(ppm=BOARD_A_PPM, power_db=-30, width_hz=CARRIER_WIDTH_HZ)
     board_b = Emitter(ppm=BOARD_B_PPM, power_db=-33, width_hz=CARRIER_WIDTH_HZ)
 
@@ -77,6 +78,7 @@ def _session_frames(destination_ip: str, payload_bytes: int, source_port: int):
 
 
 def make_network_recordings() -> None:
+    """Two captures: authorised traffic, and the same plus a rogue call."""
     normal_frames = []
     for index in range(8):
         if index % 4 == 3:
@@ -97,6 +99,7 @@ def make_network_recordings() -> None:
 
 
 def main() -> int:
+    """Write every fallback recording."""
     os.makedirs(OUTPUT_DIRECTORY, exist_ok=True)
     print(f"Writing fallback recordings to {OUTPUT_DIRECTORY}/\n")
     make_rf_recordings()
