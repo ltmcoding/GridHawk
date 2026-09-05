@@ -24,6 +24,12 @@ For us to accurately flag insecure inverters, we need to assume the following ar
 
 We'll divide our program into two threads. Our first thread scans the raw RF data to detect different critical frequencies, and if an unauthorized signal goes out, flag it. This thread should run if we feed test data into our device, or we introduce an SDR device that starts sniffing the frequencies. Otherwise, the thread should sleep.
 
-Our second thread will find and scan incoming and outgoing HTTPS requests. If any part of these requests don't match our authorized signals in a similar manner to the rules above, flag it.
+Our second thread will find and scan incoming and outgoing HTTPS requests. If any part of these requests don't match our authorized signals in a similar manner to the rules above, flag it. In scanning the HTTPS requests, we should also send metrics to our central we server using the following [open-source library](https://github.com/szlaskidaniel/solar-inverter-modbus-registers)
 
 When we flag an inverter, we should notify a central web server, which takes the inverter ID, which it then will use to notify the end user. Assumes this server endpoint exists, and make a placeholder name for it, outling the format the HTTPS request takes.
+
+## BOM
+
+[Raspberry Pi](https://www.microcenter.com/product/704295/raspberry-pi-5-1gb)
+[RTL-SDR](https://www.microcenter.com/product/711017/rtl2832u-r828d-tcxo-bios-t-hf-software-defined-radio-with-dipole-antenna-kit)
+SD card
