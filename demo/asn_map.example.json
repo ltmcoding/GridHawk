@@ -1,0 +1,6 @@
+{
+  "_comment": "Which network each address belongs to. Copy to demo/asn_map.json and use YOUR addresses. Anything not listed resolves to UNKNOWN, which the allowlist rule treats as unauthorised -- so a forgotten entry shows up as an alert rather than silently passing.",
+
+  "192.168.1.50": [64500, "VENDOR-CLOUD-PRIMARY", "DE"],
+  "192.168.1.77": [64666, "UNKNOWN-TRANSIT", "CN"]
+}

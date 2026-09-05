@@ -29,6 +29,7 @@ Rows sharing a timestamp together form one sweep across the band.
 from __future__ import annotations
 
 import csv
+import json
 import math
 from dataclasses import dataclass
 
@@ -555,3 +556,60 @@ def run_file(path: str,
         all_findings.extend(findings)
 
     return all_observations, all_findings
+
+
+# --------------------------------------------------------------------------
+# Saving and reloading a baseline
+# --------------------------------------------------------------------------
+
+def save_baseline(path: str, emitters: list[KnownEmitter]) -> None:
+    """Write baselined emitters to disk so a later run can compare against them."""
+    records = []
+    for emitter in emitters:
+        records.append({
+            "freq_hz": emitter.freq_hz,
+            "tol_hz": emitter.tol_hz,
+            "label": emitter.label,
+        })
+    with open(path, "w") as handle:
+        json.dump({"emitters": records}, handle, indent=1)
+
+
+def load_baseline(path: str) -> list[KnownEmitter]:
+    """Read emitters previously written by save_baseline."""
+    with open(path) as handle:
+        records = json.load(handle)["emitters"]
+
+    emitters = []
+    for record in records:
+        emitters.append(KnownEmitter(
+            freq_hz=record["freq_hz"],
+            tol_hz=record["tol_hz"],
+            label=record["label"],
+        ))
+    return emitters
+
+
+def carriers_from_sweeps(sweeps, tol_hz: float = DEFAULT_MATCH_TOLERANCE_HZ,
+                         label: str = "baselined") -> list[KnownEmitter]:
+    """Learn emitters from sweeps already in memory (the live-capture path).
+
+    Same clustering as KnownEmitter.from_baseline, which reads from a file.
+    """
+    groups: list[list[float]] = []
+    for sweep in sweeps:
+        for carrier in find_carriers(sweep):
+            joined_existing_group = False
+            for group in groups:
+                if abs(group[0] - carrier.freq_hz) <= tol_hz:
+                    group.append(carrier.freq_hz)
+                    joined_existing_group = True
+                    break
+            if not joined_existing_group:
+                groups.append([carrier.freq_hz])
+
+    emitters = []
+    for group in groups:
+        emitters.append(KnownEmitter(
+            freq_hz=sum(group) / len(group), tol_hz=tol_hz, label=label))
+    return emitters

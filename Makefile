@@ -1,7 +1,7 @@
 SEEDS ?= 4711 1009 2 77 314 1618 2718 8080 9001 13 555 42
 PY    ?= python3
 
-.PHONY: help scenarios detect score rf test clean cloud replay
+.PHONY: help scenarios detect score rf test clean cloud replay dashboard
 help:
 	@echo "make scenarios   generate scenarios + sealed manifests"
 	@echo "make detect      run the detector over each replay"
@@ -10,6 +10,7 @@ help:
 	@echo "make test        run the RF and pcap test suites"
 	@echo "make cloud       start the fake vendor cloud (foreground)"
 	@echo "make replay      drive real TLS sessions at the cloud (needs 'make cloud')"
+	@echo "make dashboard   run the alert receiver + dashboard (see docs/DEMO.md)"
 
 scenarios:
 	@for s in $(SEEDS); do $(PY) -m sim.scenario --seed $$s; done
@@ -40,3 +41,6 @@ replay:
 
 clean:
 	@rm -f runs/*.json runs/*.csv found/*.jsonl truth/*.json
+
+dashboard:
+	@$(PY) -m sinks.alert_receiver --bind 0.0.0.0 --port 8080

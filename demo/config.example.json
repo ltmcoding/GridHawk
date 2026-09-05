@@ -1,0 +1,27 @@
+{
+  "_comment": "Copy to demo/config.json and replace every address with the real one. Find each machine's address with 'ipconfig getifaddr en0' on macOS, 'ip addr' on Linux, or 'ipconfig' on Windows.",
+
+  "cloud_machine": {
+    "_role": "Computer A -- runs sim.cloud.server on 8443 (authorised) and a second instance on 8444 (rogue)",
+    "address": "192.168.1.50",
+    "authorised_port": 8443,
+    "rogue_port": 8444
+  },
+
+  "ops_machine": {
+    "_role": "Computer B -- runs sinks.alert_receiver, shows the dashboard",
+    "address": "192.168.1.60",
+    "port": 8080
+  },
+
+  "pi": {
+    "_role": "Raspberry Pi -- SDR receiver, packet capture, both monitors",
+    "capture_interface": "wlan0"
+  },
+
+  "radio": {
+    "nominal_hz": 433920000.0,
+    "span_hz": 150000.0,
+    "bin_hz": 250.0
+  }
+}

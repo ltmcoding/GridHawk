@@ -5,3 +5,6 @@ found/
 truth/
 sim/cloud/certs/
 *.pcap
+demo/config.json
+demo/asn_map.json
+demo/baseline.json
