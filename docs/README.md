@@ -16,6 +16,7 @@ inverters.
 | [RESULTS.md](RESULTS.md) | All measured numbers, with threats to validity |
 | [ENGINEERING-LOG.md](ENGINEERING-LOG.md) | Bugs found, decisions taken, hypotheses that failed |
 | [API.md](API.md) | Function-level reference |
+| [PI-SETUP.md](PI-SETUP.md) | **Raspberry Pi from scratch** — OS install, headless setup, SDR check |
 | [DEMO.md](DEMO.md) | **Live demonstration runbook** — hardware, wiring, and the script to run |
 | [STATUS.md](STATUS.md) | One-page summary |
 
