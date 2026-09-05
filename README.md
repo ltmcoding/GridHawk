@@ -18,7 +18,7 @@ For us to accurately flag insecure inverters, we need to assume the following ar
 - We know the type of data given by our firmware update, ANY other data should be flagged.
 - Generally, packet matching is more complicated, but include some simple pattern-matching logic (though regex preferrably) in the event we can use this to distinguish authorization.
 
-[^note] We also need a way to connect with the inverter's HTTPS endpoint to spoof the signals. We have the inverter in our possesion, and thus we should be able to recover our HTTPS signal.
+[^note] We have NO bench inverter. With no device there is no firmware extraction, therefore no client certificate, therefore no mTLS interception and no TLS payload visibility. Layer 2 is metadata-only; see `docs/STATUS.md`.
 
 ## Rough Sketch of Computer Logic
 

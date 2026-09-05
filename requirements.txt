@@ -1,0 +1,2 @@
+# No third-party dependencies.
+# Everything runs on the Python 3.11+ standard library.
