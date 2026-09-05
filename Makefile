@@ -11,6 +11,7 @@ help:
 	@echo "make cloud       start the fake vendor cloud (foreground)"
 	@echo "make replay      drive real TLS sessions at the cloud (needs 'make cloud')"
 	@echo "make dashboard   run the alert receiver + dashboard (see docs/DEMO.md)"
+	@echo "make fallback    regenerate the recorded demo data (hardware-free)"
 
 scenarios:
 	@for s in $(SEEDS); do $(PY) -m sim.scenario --seed $$s; done
@@ -32,6 +33,7 @@ rf:
 test:
 	@$(PY) -m tests.test_rf
 	@$(PY) -m tests.test_pcap
+	@$(PY) -m tests.test_demo
 
 cloud:
 	@$(PY) -m sim.cloud.server --bind 127.0.0.1 --port 8443
@@ -44,3 +46,6 @@ clean:
 
 dashboard:
 	@$(PY) -m sinks.alert_receiver --bind 0.0.0.0 --port 8080
+
+fallback:
+	@$(PY) demo/make_fallback_data.py

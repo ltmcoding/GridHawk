@@ -50,6 +50,8 @@ def load_asn_map(path: str):
 
     table = {}
     for address, record in raw.items():
+        if address.startswith("_"):
+            continue        # comment keys in the example file
         table[address] = (int(record[0]), str(record[1]), str(record[2]))
 
     def lookup(ip: str):

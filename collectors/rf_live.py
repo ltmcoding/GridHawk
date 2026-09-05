@@ -74,6 +74,52 @@ def _parse_row(line: str):
     return timestamp, bins
 
 
+def group_rows_into_sweeps(lines):
+    """Turn a stream of rtl_power CSV lines into complete sweeps.
+
+    rtl_power emits one row per chunk of the range, all sharing a timestamp
+    until the sweep restarts. So a change of timestamp marks the boundary.
+
+    IMPORTANT: this holds only while the whole span fits in one tuner hop
+    (roughly 2 MHz for an RTL-SDR). A wider span makes rtl_power retune
+    mid-sweep, and each hop may carry its own timestamp -- which would be read
+    here as several partial sweeps. Keep the span narrow.
+    """
+    current_timestamp = None
+    current_bins: list[tuple[float, float]] = []
+
+    for line in lines:
+        parsed = _parse_row(line)
+        if parsed is None:
+            continue
+        timestamp, bins = parsed
+
+        if current_timestamp is not None and timestamp != current_timestamp:
+            yield sorted(current_bins)
+            current_bins = []
+
+        current_timestamp = timestamp
+        current_bins.extend(bins)
+
+    if current_bins:
+        yield sorted(current_bins)
+
+
+def replay_sweeps(csv_path: str, loop: bool = True):
+    """Yield sweeps from a saved CSV instead of a live radio.
+
+    The fallback path for the demo: if the SDR does not enumerate, the same
+    detection and alerting code runs against recorded sweeps.
+    """
+    while True:
+        with open(csv_path) as handle:
+            lines = handle.readlines()
+        for sweep in group_rows_into_sweeps(lines):
+            yield sweep
+        if not loop:
+            return
+
+
 def stream_sweeps(freq_low_hz: float, freq_high_hz: float, bin_hz: float,
                   integration_s: float = 1.0, gain_db: str = DEFAULT_GAIN_DB,
                   device_index: int = 0, max_sweeps: int | None = None):
@@ -99,28 +145,14 @@ def stream_sweeps(freq_low_hz: float, freq_high_hz: float, bin_hz: float,
         bufsize=1,
     )
 
-    current_timestamp = None
-    current_bins: list[tuple[float, float]] = []
     sweeps_emitted = 0
 
     try:
-        for line in process.stdout:
-            parsed = _parse_row(line)
-            if parsed is None:
-                continue
-            timestamp, bins = parsed
-
-            # A new timestamp means the previous sweep is complete.
-            if current_timestamp is not None and timestamp != current_timestamp:
-                yield sorted(current_bins)
-                sweeps_emitted += 1
-                current_bins = []
-                if max_sweeps is not None and sweeps_emitted >= max_sweeps:
-                    return
-
-            current_timestamp = timestamp
-            current_bins.extend(bins)
-
+        for sweep in group_rows_into_sweeps(process.stdout):
+            yield sweep
+            sweeps_emitted += 1
+            if max_sweeps is not None and sweeps_emitted >= max_sweeps:
+                return
     finally:
         process.terminate()
         try:

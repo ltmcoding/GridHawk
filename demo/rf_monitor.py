@@ -26,6 +26,7 @@ from collectors import rf_live
 from collectors.rf import (
     analyse_sweep, carriers_from_sweeps, save_baseline, load_baseline,
 )
+from correlate.inventory import Inventory, enrich, rank
 from sinks.webhook import AlertSink
 
 
@@ -43,6 +44,37 @@ DEFAULT_BASELINE_SWEEPS = 12
 # re-alerting about the same frequency for this long.
 ALERT_REPEAT_SUPPRESSION_S = 20.0
 SAME_EMITTER_TOLERANCE_HZ = 3_000.0
+
+
+def _sweep_source(args, max_sweeps=None):
+    """Sweeps from the radio, or from a recording when --replay is given.
+
+    The fallback exists because a live demo with no fallback is a demo that can
+    fail in front of an audience. Detection and alerting are identical either
+    way -- only where the sweeps come from changes.
+    """
+    if args.replay:
+        print(f"REPLAY MODE -- sweeps from {args.replay} (no radio in use)\n")
+        source = rf_live.replay_sweeps(args.replay, loop=max_sweeps is None)
+        if max_sweeps is None:
+            return source
+
+        def limited():
+            for index, sweep in enumerate(source):
+                if index >= max_sweeps:
+                    return
+                yield sweep
+        return limited()
+
+    low_hz, high_hz = _band_edges(args.nominal, args.span)
+    return rf_live.stream_sweeps(low_hz, high_hz, args.bin_hz, args.integration,
+                                 args.gain, args.device, max_sweeps=max_sweeps)
+
+
+def _replay_pace(args) -> None:
+    """Slow a replay to roughly the rate a real sweep would arrive."""
+    if args.replay:
+        time.sleep(args.integration)
 
 
 def _band_edges(nominal_hz: float, span_hz: float) -> tuple[float, float]:
@@ -64,9 +96,7 @@ def run_baseline(args) -> int:
     print("Only the AUTHORISED radio should be transmitting right now.\n")
 
     sweeps = []
-    for sweep in rf_live.stream_sweeps(low_hz, high_hz, args.bin_hz,
-                                       args.integration, args.gain,
-                                       args.device, max_sweeps=args.sweeps):
+    for sweep in _sweep_source(args, max_sweeps=args.sweeps):
         sweeps.append(sweep)
         print(f"  sweep {len(sweeps)}/{args.sweeps}")
 
@@ -102,6 +132,12 @@ def run_monitor(args) -> int:
     for emitter in known:
         print(f"  {emitter.freq_hz/1e6:.6f} MHz  (+/-{emitter.tol_hz/1000:.1f} kHz)")
 
+    inventory = None
+    if args.inventory and os.path.exists(args.inventory):
+        inventory = Inventory.load(args.inventory)
+        print(f"Inventory: {len(inventory.records)} device(s), "
+              f"{inventory.total_mw():.3f} MW total")
+
     sink = AlertSink(args.alert_url, source_name="pi-rf-monitor")
     if args.alert_url:
         print(f"Alerts -> {args.alert_url}")
@@ -115,10 +151,9 @@ def run_monitor(args) -> int:
     sweep_number = 0
 
     try:
-        for sweep in rf_live.stream_sweeps(low_hz, high_hz, args.bin_hz,
-                                           args.integration, args.gain,
-                                           args.device):
+        for sweep in _sweep_source(args):
             sweep_number += 1
+            _replay_pace(args)
             observation, findings = analyse_sweep(
                 sweep,
                 ts=time.time(),
@@ -135,6 +170,9 @@ def run_monitor(args) -> int:
             print(summary)
             for carrier in carriers:
                 print(f"      {_describe(carrier, args.nominal)}")
+
+            if inventory is not None and findings:
+                findings = rank(enrich(findings, inventory))
 
             for finding in findings:
                 frequency = finding.detail["freq_hz"]
@@ -173,6 +211,10 @@ def main() -> int:
     parser.add_argument("--device", type=int, default=0)
     parser.add_argument("--sweeps", type=int, default=DEFAULT_BASELINE_SWEEPS)
     parser.add_argument("--band-name", default="ISM-433")
+    parser.add_argument("--replay", default=None,
+                        help="read sweeps from a recorded CSV instead of the radio")
+    parser.add_argument("--inventory", default="demo/inventory.json",
+                        help="Layer 1 join: weights alerts by capacity at risk")
     args = parser.parse_args()
 
     try:

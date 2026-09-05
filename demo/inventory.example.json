@@ -1,0 +1,48 @@
+{
+  "_comment": "Layer 1 join. Keys are whatever identifies a device in the observation stream: the source IP for network findings, the band name for RF findings. Per-install capacities and county concentrations are the real figures from the Grid Lockout analysis of California Rule 21 interconnection records. Copy to demo/inventory.json and key it to your own addresses.",
+
+  "192.168.1.42": {
+    "vendor": "Sungrow",
+    "model": "SG110CX",
+    "capacity_mw": 0.501,
+    "county": "Kern",
+    "parent_country": "China",
+    "segment": "utility"
+  },
+
+  "192.168.1.43": {
+    "vendor": "Chint",
+    "model": "CPS-SCA",
+    "capacity_mw": 0.309,
+    "county": "Kings",
+    "parent_country": "China",
+    "segment": "utility / commercial"
+  },
+
+  "192.168.1.44": {
+    "vendor": "Huawei",
+    "model": "SUN2000",
+    "capacity_mw": 0.237,
+    "county": "Merced",
+    "parent_country": "China",
+    "segment": "utility / commercial"
+  },
+
+  "192.168.1.45": {
+    "vendor": "Ginlong Solis",
+    "model": "S5-GR1P",
+    "capacity_mw": 0.008,
+    "county": "Madera",
+    "parent_country": "China",
+    "segment": "residential"
+  },
+
+  "ISM-433": {
+    "vendor": "Sungrow",
+    "model": "SG110CX enclosure",
+    "capacity_mw": 0.501,
+    "county": "Kern",
+    "parent_country": "China",
+    "segment": "utility"
+  }
+}

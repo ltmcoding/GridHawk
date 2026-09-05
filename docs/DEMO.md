@@ -99,7 +99,25 @@ Computer A's address is the authorised one. Computer B's is the rogue.
 Anything not listed resolves to UNKNOWN, which counts as unauthorised — so a
 typo produces an alert rather than silence.
 
-### 4. Check the whole path before the day
+### 4. Fill in the inventory (Layer 1 join)
+
+This is what makes an alert say *"Sungrow SG110CX, 501 kW, Kern County"* instead
+of an anonymous address. Alert priority is `severity x MW behind the device`,
+so a utility-scale unit outranks a rooftop raising the identical flag.
+
+```bash
+cp demo/inventory.example.json demo/inventory.json
+nano demo/inventory.json
+```
+
+Key it by the Pi's own address (for network findings) and by the band name
+(for RF findings). The per-install capacities in the example are the real
+figures from the Grid Lockout analysis of California Rule 21 records.
+
+A device missing from the inventory still alerts -- it is simply ranked last.
+An unknown device on the network is itself worth noticing.
+
+### 5. Check the whole path before the day
 
 ```bash
 # Computer B
@@ -113,6 +131,39 @@ AlertSink('http://192.168.1.60:8080/alert').send(
     Finding(ts=0, source='rf', subject='test', kind='excess_emitter',
             severity='info', detail={'note': 'connectivity check'}))"
 ```
+
+---
+
+## If the hardware fails: fallback mode
+
+**Rehearse this once before the day.** Recorded data drives the identical
+detection and alerting code, so the dashboard still fills with real alerts if
+the SDR will not enumerate or a Feather will not flash.
+
+```bash
+make fallback          # regenerate the recordings (already committed)
+
+# Act 1 without a radio
+python3 demo/rf_monitor.py baseline --replay demo/fallback/rf_baseline.csv
+python3 demo/rf_monitor.py monitor  --replay demo/fallback/rf_authorised.csv \
+    --alert-url http://192.168.1.60:8080/alert      # stays silent
+python3 demo/rf_monitor.py monitor  --replay demo/fallback/rf_two_radios.csv \
+    --alert-url http://192.168.1.60:8080/alert      # names the rogue
+python3 demo/rf_monitor.py monitor  --replay demo/fallback/rf_rogue_only.csv \
+    --alert-url http://192.168.1.60:8080/alert      # counting would miss this
+
+# Act 2 without a network (no sudo, no tcpdump)
+python3 demo/tls_monitor.py --replay demo/fallback/tls_normal.pcap \
+    --asn-map demo/asn_map.json --port 8443 --window 5 \
+    --alert-url http://192.168.1.60:8080/alert      # stays silent
+python3 demo/tls_monitor.py --replay demo/fallback/tls_rogue.pcap \
+    --asn-map demo/asn_map.json --port 8443 --window 5 \
+    --alert-url http://192.168.1.60:8080/alert      # flags the call
+```
+
+**Say that you are in fallback mode if you use it.** The recordings are
+synthetic and clearly labelled as such. Claiming a live measurement you did not
+take would undo the credibility the rest of the project is built on.
 
 ---
 
@@ -229,6 +280,9 @@ design — the radio layer catches what the network layer structurally cannot se
 | Every session alerts | address not in `asn_map.json` | add the real IP |
 | No alerts reach the dashboard | firewall, or bound to localhost | bind `0.0.0.0`; check with `curl` |
 | No traffic captured | wrong interface | `ip addr` — usually `wlan0` or `eth0` |
+| Schedule rejected as scenario time | windows written as seconds-from-zero | live capture needs absolute times; use `maintenance_windows_iso` |
+| Alerts show no device or capacity | inventory missing or wrong key | check `demo/inventory.json` is keyed by the Pi's address and band name |
+| Any hardware failure at all | — | switch to fallback mode above and say so |
 
 **Power the Feathers from battery packs, not from the Pi.** Sharing a supply
 with the receiver couples transmitter energy down the USB cable, and you end up
