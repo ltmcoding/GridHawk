@@ -42,6 +42,16 @@ ANOMALY_DST = {
 }
 
 
+def _event_time(event: "Event") -> float:
+    """Sort key for generated events."""
+    return event.t
+
+
+def _anomaly_time(anomaly: dict) -> float:
+    """Sort key for ground-truth anomaly records."""
+    return anomaly["t"]
+
+
 @dataclass
 class Event:
     t: float
@@ -82,8 +92,8 @@ def build(seed: int, duration_s: float = 7_200.0) -> tuple[list[Event], list[dic
         events.append(Event(t=at, kind=kind, dst=dst, nbytes=nbytes, benign=False))
         truth.append({"t": round(at, 3), "kind": kind, "dst": dst, "bytes": nbytes})
 
-    events.sort(key=lambda e: e.t)
-    truth.sort(key=lambda x: x["t"])
+    events.sort(key=_event_time)
+    truth.sort(key=_anomaly_time)
     return events, truth
 
 

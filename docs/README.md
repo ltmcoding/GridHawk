@@ -23,7 +23,7 @@ inverters.
 ```
 make scenarios && make detect && make score    # TLS egress, 12 seeds
 make rf                                        # RF carrier detection
-python3 -m tests.test_rf                        # 11 tests
+make test                                      # 34 tests (RF + pcap)
 ```
 
 No dependencies. Python 3.11+ standard library only.

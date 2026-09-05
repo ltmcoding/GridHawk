@@ -80,7 +80,14 @@ class Finding:
         return json.dumps(self.to_dict(), sort_keys=True, default=str)
 
 
+def _descending_priority(finding: "Finding") -> float:
+    """Sort key placing the most urgent findings first."""
+    return -finding.priority
+
+
 def write_findings(path: str, findings: list[Finding]) -> None:
-    with open(path, "w") as fh:
-        for f in sorted(findings, key=lambda x: -x.priority):
-            fh.write(f.to_json() + "\n")
+    """Write findings as JSON Lines, most urgent first."""
+    ordered = sorted(findings, key=_descending_priority)
+    with open(path, "w") as handle:
+        for finding in ordered:
+            handle.write(finding.to_json() + "\n")

@@ -7,15 +7,37 @@ reason the layered design exists.
 Entry point: `core.rules.evaluate(obs, allowed_asns, allowed_countries,
 baseline=None, volume_factor=8.0, maintenance_windows=None) -> list[Finding]`
 
+## Tunable constants
+
+Every threshold lives at the top of `core/rules.py` so a reviewer can see all
+the knobs at once rather than hunting for numbers inside the logic.
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `VOLUME_SPIKE_FACTOR` | 8.0 | multiple of the 95th-percentile size that counts as a spike |
+| `VOLUME_PERCENTILE` | 0.95 | percentile used as the "normal large session" reference |
+| `CADENCE_EARLY_FRACTION` | 0.5 | fraction of a channel's period below which a gap is "early" |
+| `CADENCE_MAX_FIRING_RATE` | 0.05 | share of gaps above which the cadence rule abstains |
+| `CADENCE_MIN_FIRINGS` | 3 | floor on that limit, so small channels stay usable |
+| `MIN_SESSIONS_FOR_CADENCE` | 6 | sessions needed before a period means anything |
+| `CHANNEL_MIN_LOG_GAP` | 0.25 | log10 size gap that separates two channels (~1.8x) |
+| `CHANNEL_MAX_COUNT` | 4 | most channels we will split a stream into |
+| `TIMESTAMP_MATCH_DECIMALS` | 3 | rounding used when matching a session across rules |
+| `TUNNEL_NAME_HINTS` | VPN, PROXY, TOR, TUNNEL | ASN-name substrings treated as tunnels |
+
+`collectors/rf.py` carries its own set: `DEFAULT_SNR_DB`,
+`DEFAULT_MIN_PROMINENCE_DB`, `DEFAULT_SMOOTHING_BINS`,
+`NOISE_SPREAD_MULTIPLIER`, `DEFAULT_MATCH_TOLERANCE_HZ`.
+
 ## Baseline learning
 
 `core.rules.Baseline.learn(obs)` derives, from the observation stream itself:
 
 | Attribute | Meaning |
 |---|---|
-| `dst_seen` | destination → session count |
-| `volumes`, `vol_median`, `vol_p95` | session byte-size envelope |
-| `intervals`, `interval_median` | inter-session timing |
+| `sessions_per_destination` | destination → session count |
+| `session_sizes`, `size_median`, `size_percentile` | session byte-size envelope |
+| `gaps_between_sessions`, `gap_median` | inter-session timing |
 
 Learned rather than hardcoded so that changing the simulator's profile
 constants does not silently invalidate thresholds. The cost is that a baseline
@@ -56,7 +78,7 @@ the noisiest in a real deployment.
 
 ## 3 · `tunnel_indicator` — egress shaped like a proxy or VPN
 
-**Fires when** an out-of-allowlist ASN's name matches `TUNNEL_HINTS`
+**Fires when** an out-of-allowlist ASN's name matches `TUNNEL_NAME_HINTS`
 (`VPN`, `PROXY`, `TOR`, `TUNNEL`). **Severity** `high`.
 
 A specialisation of `new_asn`: same trigger, more specific classification.
@@ -82,7 +104,7 @@ explains a large transfer.
 
 ## 5 · `off_cycle_burst` — connection early against its channel's period
 
-`core.rules._cadence_rule(obs, factor=0.5, claimed=None, maintenance_windows=None)`
+`core.rules.check_cadence(observations, already_explained=None, maintenance_windows=None, early_fraction=CADENCE_EARLY_FRACTION)`
 
 **Fires when** the gap between consecutive sessions *in the same channel* is
 below `factor` × that channel's median period. Default `factor = 0.5`.
@@ -94,9 +116,9 @@ A device multiplexes several logical channels (heartbeat, telemetry, firmware)
 over one destination, each with its own period. Pooling them yields a
 meaningless cadence, so sessions are first split by byte magnitude:
 
-- `_log_bands(volumes, min_gap=0.25, max_bands=4)` splits at the widest gaps in
+- `split_into_channels(session_sizes)` splits at the widest gaps in
   `log10(bytes)`, producing **contiguous** bands.
-- `_band_of(nbytes, edges)` assigns a session to a band.
+- `channel_of(session_bytes, boundaries)` assigns a session to a band.
 
 Band edges must be contiguous. An earlier version left holes between bands, and
 every session falling in a hole was silently dumped into the final band, where

@@ -71,17 +71,32 @@ spots.
 | `maintenance_windows` | `None` | `[(start, end), …]` suppressing timing/volume rules only |
 
 ### `class Baseline`
-`.learn(obs)` → self. Populates `dst_seen`, `volumes`, `vol_median`,
-`vol_p95`, `intervals`, `interval_median`.
+`.learn(observations)` → self. Populates `sessions_per_destination`,
+`session_sizes`, `size_median`, `size_percentile`, `gaps_between_sessions`,
+`gap_median`.
 
-### `_log_bands(volumes, min_gap=0.25, max_bands=4)`
+### Individual rules
+
+Each per-session rule returns a `Finding`, or `None` when it has nothing to say.
+They are public so they can be read, tested, and reused one at a time.
+
+| Function | Returns |
+|---|---|
+| `check_destination(observation, allowed_asns)` | `new_asn` or `tunnel_indicator`, else `None` |
+| `check_country(observation, allowed_countries)` | `geo_drift`, else `None` |
+| `check_volume(observation, baseline, spike_factor=VOLUME_SPIKE_FACTOR)` | `volume_spike`, else `None` |
+| `check_cadence(observations, already_explained=None, maintenance_windows=None, early_fraction=CADENCE_EARLY_FRACTION)` | list of `off_cycle_burst` |
+
+All tunable thresholds are module-level constants at the top of
+`core/rules.py`; see [RULES.md](RULES.md#tunable-constants).
+
+### `split_into_channels(session_sizes) -> list[tuple[float, float]]`
 Splits sessions into channels at the widest gaps in `log10(bytes)`. Returns
-**contiguous** `(lo, hi)` edges in log space.
+**contiguous** `(low, high)` edges in log space — non-contiguous edges silently
+misassign every session that lands in a hole.
 
-### `_band_of(nbytes, edges) -> int`
-
-### `_cadence_rule(obs, factor=0.5, claimed=None, maintenance_windows=None)`
-Off-cycle detection with deduplication and the firing-rate abstain guard.
+### `channel_of(session_bytes, boundaries) -> int`
+Index of the channel a session belongs to.
 
 ---
 

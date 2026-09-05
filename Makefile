@@ -1,12 +1,13 @@
 SEEDS ?= 4711 1009 2 77 314 1618 2718 8080 9001 13 555 42
 PY    ?= python3
 
-.PHONY: help scenarios detect score rf clean cloud replay
+.PHONY: help scenarios detect score rf test clean cloud replay
 help:
 	@echo "make scenarios   generate scenarios + sealed manifests"
 	@echo "make detect      run the detector over each replay"
 	@echo "make score       score findings against the manifests"
 	@echo "make rf          synthesise RF sweeps and run the carrier detector"
+	@echo "make test        run the RF and pcap test suites"
 	@echo "make cloud       start the fake vendor cloud (foreground)"
 	@echo "make replay      drive real TLS sessions at the cloud (needs 'make cloud')"
 
@@ -26,6 +27,10 @@ rf:
 	@$(PY) -c "from collectors.rf import run_file; \
 	  [print(p, '->', run_file(p,'ISM-433',1,433.92e6)[0][0].fields['n_carriers'], 'carriers') \
 	   for p in ('runs/rf_single.csv','runs/rf_dual.csv','runs/rf_close.csv')]"
+
+test:
+	@$(PY) -m tests.test_rf
+	@$(PY) -m tests.test_pcap
 
 cloud:
 	@$(PY) -m sim.cloud.server --bind 127.0.0.1 --port 8443

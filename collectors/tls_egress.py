@@ -1,80 +1,174 @@
-"""Network egress attestation (Grid Lockout Layer 2).
+"""Network egress attestation: watch what the inverter talks to.
 
-Metadata only.  We hold no inverter, therefore no client certificate, therefore
-no mTLS interception and no payload visibility.  Everything here works on what
-is observable from outside the TLS session: destination, ASN, country, session
-byte volume, and connection cadence.
+This is Grid Lockout Layer 2. The inverter is the CLIENT here -- it calls out to
+a vendor cloud, and we watch those outbound connections from the site boundary.
 
-Two input paths that emit an identical Observation stream:
-  from_pcap()   -- real capture; proves the capture pipeline
-  from_events() -- deterministic scenario replay; used for scoring
+METADATA ONLY, AND PERMANENTLY SO
+---------------------------------
+We have no bench inverter. No device means no firmware to extract, which means
+no client certificate, which means no way to sit inside the TLS session. So we
+never see what is inside these connections.
+
+Two facts make that permanent rather than a temporary gap:
+
+  * A certificate on its own is public and decrypts nothing. You need the
+    matching private key.
+  * Even with the key, a captured session cannot be decrypted afterwards. TLS
+    1.3 always uses ephemeral key exchange, as does any well-configured 1.2.
+    Interception has to happen live, in the middle of the connection.
+
+What we CAN see is still useful: who the device talks to, which network that
+belongs to, which country, how much data moves, and how often.
+
+TWO WAYS IN, ONE WAY OUT
+------------------------
+`from_pcap` reads real captured packets. `from_events` replays a simulated
+scenario. Both produce the exact same Observation records, so the detection
+rules cannot tell the difference -- there is no separate "test mode" that could
+quietly drift away from the real one.
 """
 
 from __future__ import annotations
 
 import json
-from collections import defaultdict
 
 from core.events import Observation
-from collectors import pcap as pcapmod
+from collectors import pcap as pcap_reader
 
 
-def from_pcap(path: str, asn_lookup, port: int = 443) -> list[Observation]:
-    """Assemble TCP flows from a capture into per-session Observations."""
-    flows: dict[tuple, dict] = {}
-    out: list[Observation] = []
+# Default port we treat as TLS traffic.
+HTTPS_PORT = 443
 
-    def emit(key, f):
-        asn, name, cc = asn_lookup(f["dst"])
-        out.append(Observation(
-            ts=f["start"], source="tls_egress", subject=f["src"],
-            fields={
-                "dst": f["dst"], "dport": f["dport"],
-                "asn": asn, "asn_name": name, "cc": cc,
-                "bytes": f["bytes"], "duration": round(f["last"] - f["start"], 4),
-                "sni": f["sni"],
-            },
+# Address the simulated inverter transmits from, used when replaying events.
+SIMULATED_DEVICE_IP = "172.28.0.5"
+
+# Nominal session duration recorded for replayed events. Replay has no packet
+# timing, so this is a placeholder rather than a measurement.
+REPLAY_SESSION_DURATION_S = 0.2
+
+
+def _build_observation(start_time, source_ip, destination_ip, destination_port,
+                       total_bytes, duration, server_name, asn_lookup) -> Observation:
+    """Assemble one session record, resolving the destination's network."""
+    asn, asn_name, country = asn_lookup(destination_ip)
+
+    return Observation(
+        ts=start_time,
+        source="tls_egress",
+        subject=source_ip,
+        fields={
+            "dst": destination_ip,
+            "dport": destination_port,
+            "asn": asn,
+            "asn_name": asn_name,
+            "cc": country,
+            "bytes": total_bytes,
+            "duration": duration,
+            "sni": server_name,
+        },
+    )
+
+
+def _observation_time(observation: Observation) -> float:
+    """Sort key."""
+    return observation.ts
+
+
+def from_pcap(path: str, asn_lookup, port: int = HTTPS_PORT) -> list[Observation]:
+    """Group captured packets into sessions, one Observation per session.
+
+    Packets arrive interleaved across many connections, so they are grouped by
+    the four values that identify a TCP connection: both addresses and both
+    ports. Both directions of one connection are deliberately folded into the
+    same group, so `bytes` counts the whole conversation.
+    """
+    open_sessions: dict[tuple, dict] = {}
+    observations: list[Observation] = []
+
+    def close_session(session):
+        observations.append(_build_observation(
+            start_time=session["start"],
+            source_ip=session["src"],
+            destination_ip=session["dst"],
+            destination_port=session["dport"],
+            total_bytes=session["bytes"],
+            duration=round(session["last"] - session["start"], 4),
+            server_name=session["sni"],
+            asn_lookup=asn_lookup,
         ))
 
-    for p in pcapmod.read(path):
-        if p.dport != port and p.sport != port:
+    for packet in pcap_reader.read(path):
+        if packet.dport != port and packet.sport != port:
             continue
-        outbound = p.dport == port
-        key = (p.src, p.dst, p.sport, p.dport) if outbound else (p.dst, p.src, p.dport, p.sport)
-        f = flows.get(key)
-        if f is None:
-            f = flows[key] = {
-                "src": key[0], "dst": key[1], "dport": key[3],
-                "start": p.ts, "last": p.ts, "bytes": 0, "sni": None,
-            }
-        f["last"] = p.ts
-        f["bytes"] += p.wire_len
-        if f["sni"] is None and p.payload:
-            f["sni"] = pcapmod.parse_sni(p.payload)
-        if p.fin or p.rst:
-            emit(key, f)
-            del flows[key]
 
-    for key, f in flows.items():        # captures often end mid-flow
-        emit(key, f)
-    out.sort(key=lambda o: o.ts)
-    return out
+        # Build the key from the client's point of view regardless of which way
+        # this particular packet is travelling, so both directions land in one
+        # group.
+        travelling_outbound = packet.dport == port
+        if travelling_outbound:
+            key = (packet.src, packet.dst, packet.sport, packet.dport)
+        else:
+            key = (packet.dst, packet.src, packet.dport, packet.sport)
+
+        session = open_sessions.get(key)
+        if session is None:
+            client_ip, server_ip, _client_port, server_port = key
+            session = {
+                "src": client_ip,
+                "dst": server_ip,
+                "dport": server_port,
+                "start": packet.ts,
+                "last": packet.ts,
+                "bytes": 0,
+                "sni": None,
+            }
+            open_sessions[key] = session
+
+        session["last"] = packet.ts
+        session["bytes"] += packet.wire_len
+
+        # The requested server name appears once, in the first packet of the
+        # handshake.
+        if session["sni"] is None and packet.payload:
+            session["sni"] = pcap_reader.parse_sni(packet.payload)
+
+        if packet.fin or packet.rst:
+            close_session(session)
+            del open_sessions[key]
+
+    # Captures routinely stop mid-conversation. Emit those sessions rather than
+    # discarding them, or the last minute of every capture silently disappears.
+    for session in open_sessions.values():
+        close_session(session)
+
+    observations.sort(key=_observation_time)
+    return observations
 
 
 def from_events(path: str, asn_lookup) -> list[Observation]:
-    """Replay a scenario's event list as Observations, in scenario time."""
-    events = json.load(open(path))
-    out: list[Observation] = []
-    for ev in events:
-        asn, name, cc = asn_lookup(ev["dst"])
-        out.append(Observation(
-            ts=ev["t"], source="tls_egress", subject="172.28.0.5",
-            fields={
-                "dst": ev["dst"], "dport": 443,
-                "asn": asn, "asn_name": name, "cc": cc,
-                "bytes": ev["nbytes"], "duration": 0.2,
-                "sni": f"{ev['dst'].replace('.', '-')}.vendor-cloud.test",
-            },
+    """Replay a generated scenario as Observations, in scenario time.
+
+    Used for scoring, because scenario timestamps are exact and repeatable.
+    """
+    with open(path) as handle:
+        events = json.load(handle)
+
+    observations = []
+    for event in events:
+        destination_ip = event["dst"]
+        # The simulated cloud names each endpoint after its address.
+        server_name = f"{destination_ip.replace('.', '-')}.vendor-cloud.test"
+
+        observations.append(_build_observation(
+            start_time=event["t"],
+            source_ip=SIMULATED_DEVICE_IP,
+            destination_ip=destination_ip,
+            destination_port=HTTPS_PORT,
+            total_bytes=event["nbytes"],
+            duration=REPLAY_SESSION_DURATION_S,
+            server_name=server_name,
+            asn_lookup=asn_lookup,
         ))
-    out.sort(key=lambda o: o.ts)
-    return out
+
+    observations.sort(key=_observation_time)
+    return observations

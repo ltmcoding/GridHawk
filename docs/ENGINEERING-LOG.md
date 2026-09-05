@@ -48,8 +48,8 @@ was changed. Precision 0.64 → 0.90, recall unchanged at 1.00.
 **Symptom.** Band edges printed as `[(2.301, 2.845), (3.088, 5.404), …]` — a
 hole between 2.845 and 3.088.
 
-**Cause.** `_log_bands` started each band at `ls[prev]` rather than at the
-previous band's upper edge, leaving gaps. `_band_of` falls through to the last
+**Cause.** `split_into_channels` started each band at `ls[prev]` rather than at the
+previous band's upper edge, leaving gaps. `channel_of` falls through to the last
 band, so every session in a hole was assigned to an unrelated band.
 
 **Fix.** Each band now starts where the previous ended.
