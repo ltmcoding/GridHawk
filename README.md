@@ -33,3 +33,42 @@ When we flag an inverter, we should notify a central web server, which takes the
 [Raspberry Pi](https://www.microcenter.com/product/704295/raspberry-pi-5-1gb)
 [RTL-SDR](https://www.microcenter.com/product/711017/rtl2832u-r828d-tcxo-bios-t-hf-software-defined-radio-with-dipole-antenna-kit)
 SD card
+
+## Implementation
+
+This repo implements **Layers 2 and 3** — network egress attestation and RF
+egress detection. Layer 1 (fleet inventory) lives in the Grid Lockout artifact.
+
+```
+make scenarios && make detect && make score    # TLS egress, 12 seeds
+make rf                                        # RF carrier detection
+python3 -m tests.test_rf                        # 11 tests
+```
+
+No dependencies — Python 3.11+ standard library only.
+
+### Documentation
+
+Full docs in [`docs/`](docs/README.md):
+
+| | |
+|---|---|
+| [ARCHITECTURE](docs/ARCHITECTURE.md) | System design, data flow, module map |
+| [COLLECTORS](docs/COLLECTORS.md) | Each collector, including the two not yet built |
+| [RULES](docs/RULES.md) | Every detection rule and its blind spots |
+| [RF](docs/RF.md) | Physics, algorithm, resolution limits, bench protocol |
+| [SIMULATION](docs/SIMULATION.md) | Test harness and red/blue methodology |
+| [RESULTS](docs/RESULTS.md) | Measured numbers and threats to validity |
+| [ENGINEERING LOG](docs/ENGINEERING-LOG.md) | Bugs found, decisions, failed hypotheses |
+| [API](docs/API.md) | Function-level reference |
+
+### Status
+
+TLS egress: precision **1.00**, recall **1.00**, zero false positives when the
+site's firmware schedule is supplied (0.90 / 1.00 without it). RF: resolves
+emitters separated by more than ~1.3x the carrier's occupied bandwidth, and
+identifies unaccounted carriers against a baseline.
+
+**All results are synthetic.** No bench inverter, no real RF capture. Device
+profile constants are assumed, not measured. See
+[threats to validity](docs/RESULTS.md#threats-to-validity).
