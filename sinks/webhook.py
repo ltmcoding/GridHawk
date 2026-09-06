@@ -67,10 +67,19 @@ class AlertSink:
     def __init__(self, url: str | None, source_name: str = "gridhawk",
                  timeout: float = DEFAULT_TIMEOUT_S, verbose: bool = True,
                  suppress_repeats_for: float = NO_SUPPRESSION,
-                 identity_of=default_identity):
-        """Configure delivery. A url of None means console-only."""
+                 identity_of=default_identity, layer: str | None = None):
+        """Configure delivery. A url of None means console-only.
+
+        `source_name` says which machine is reporting ("pi-rf-monitor") and
+        rides along on alerts. `layer` says which detection layer this is
+        ("rf"), and is what the dashboard files heartbeats under. They are
+        different things: filing a heartbeat under the reporter's name means no
+        lane ever finds it, and the dashboard shows every layer as offline
+        while the monitors are running perfectly.
+        """
         self.url = url
         self.source_name = source_name
+        self.layer = layer or source_name
         self.timeout = timeout
         self.verbose = verbose
         self.suppress_repeats_for = suppress_repeats_for
@@ -123,8 +132,9 @@ class AlertSink:
             return False
 
         payload = {
-            "source": self.source_name,
+            "source": self.layer,
             "state": state,
+            "reporter": self.source_name,
             "detail": detail,
             "ts": time.time(),
         }

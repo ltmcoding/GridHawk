@@ -312,7 +312,7 @@ def main() -> int:
         print(f"Inventory: {len(inventory.records)} device(s), "
               f"{inventory.total_mw():.3f} MW total")
 
-    sink = AlertSink(args.alert_url, source_name="pi-tls-monitor",
+    sink = AlertSink(args.alert_url, source_name="pi-tls-monitor", layer="tls_egress",
                      suppress_repeats_for=ALERT_REPEAT_SUPPRESSION_S,
                      identity_of=destination_identity)
 

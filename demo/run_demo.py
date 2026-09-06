@@ -34,10 +34,17 @@ DASHBOARD_PORT = 8080
 CLOUD_PORT = 8443
 
 BASELINE_SWEEPS = 12
-QUIET_SWEEPS = 10          # long enough to be convincing, short enough to hold a room
-ALARM_SWEEPS = 6
+
+# How long to let each phase run. Long enough to be convincing and for the
+# dashboard to settle; short enough to hold a room.
+QUIET_DWELL_S = 20.0
+ALARM_DWELL_S = 16.0
 CAPTURE_WINDOW_S = 8.0
-QUIET_WINDOWS = 2
+
+# Addresses baked into the recorded captures by demo/make_fallback_data.py.
+# A rehearsal has to resolve those, not whatever this machine is called today.
+REPLAY_CLOUD_IP = "192.168.1.50"
+REPLAY_ROGUE_IP = "192.168.1.60"
 
 # ANSI, because a demo is easier to follow when the instruction is not the same
 # colour as the output scrolling past it.
@@ -191,6 +198,33 @@ def cleanup() -> None:
 # Preflight
 # --------------------------------------------------------------------------
 
+def write_address_map(args) -> str:
+    """Regenerate the address map from the addresses actually in use.
+
+    A map written by hand goes stale the moment DHCP moves the Mac, and the
+    failure is quiet and confusing: every session resolves to UNKNOWN, so the
+    detector flags all of them and normal traffic looks like an attack. The
+    runner already knows both endpoints, so it writes the map itself.
+    """
+    import socket
+    if args.replay:
+        cloud_ip, rogue_ip = REPLAY_CLOUD_IP, REPLAY_ROGUE_IP
+    else:
+        cloud_ip, rogue_ip = socket.gethostbyname(args.mac), args.rogue
+
+    path = os.path.join(REPO, args.asn_map)
+    with open(path, "w") as handle:
+        json.dump({
+            "_comment": "Written by run_demo.py from the addresses in use.",
+            cloud_ip: [64500, "VENDOR-CLOUD-PRIMARY", "DE"],
+            rogue_ip: [64666, "UNKNOWN-TRANSIT", "CN"],
+        }, handle, indent=1)
+
+    print(f"{DIM}  address map written: {cloud_ip} authorised, "
+          f"{rogue_ip} unauthorised{RESET}")
+    return cloud_ip
+
+
 def preflight(args) -> bool:
     """Check every dependency before anything starts.
 
@@ -206,6 +240,12 @@ def preflight(args) -> bool:
               f"--bind 0.0.0.0 --port {DASHBOARD_PORT}{RESET}")
         print(f"{DIM}    Or, to rehearse with everything on this machine: "
               f"make demo-rehearse{RESET}")
+
+    try:
+        cloud_ip = write_address_map(args)
+        ok &= verdict(True, f"address map matches the cloud at {cloud_ip}")
+    except OSError as error:
+        ok &= verdict(False, f"could not resolve {args.mac}: {error}")
 
     # Replay needs no cloud, no rogue endpoint, no radio and no capture -- it
     # reads recordings. Checking for them would fail a rehearsal that is fine.
@@ -241,9 +281,6 @@ def preflight(args) -> bool:
         print(f"{DIM}    On your Mac: sudo ifconfig en0 alias {args.rogue} "
               f"255.255.252.0{RESET}")
 
-    ok &= verdict(os.path.exists(os.path.join(REPO, args.asn_map)),
-                  f"address map present at {args.asn_map}")
-
     if not args.replay:
         from collectors import rf_live
         ok &= verdict(rf_live.is_available(), "rtl_power installed")
@@ -255,14 +292,89 @@ def preflight(args) -> bool:
 # The demo
 # --------------------------------------------------------------------------
 
+def lane_summary(mac_host: str) -> str:
+    """One line describing what the dashboard is showing right now."""
+    try:
+        with urllib.request.urlopen(f"{dashboard_url(mac_host)}/state.json",
+                                    timeout=DASHBOARD_TIMEOUT_S) as r:
+            state = json.load(r)
+    except (urllib.error.URLError, OSError, ValueError):
+        return "dashboard unreachable"
+
+    parts = []
+    for lane in state["lanes"]:
+        detail = lane.get("detail", {})
+        if lane["source"] == "rf":
+            carriers = detail.get("carriers", [])
+            unknown = sum(1 for c in carriers if not c.get("known"))
+            parts.append(f"RF {len(carriers)} carrier(s)"
+                         + (f", {unknown} unaccounted" if unknown else ""))
+        else:
+            parts.append(f"net {len(detail.get('sessions', []))} session(s)")
+    return " | ".join(parts)
+
+
+def dwell(args, seconds: float, note: str) -> None:
+    """Let the monitor run, showing what the dashboard sees while it does.
+
+    The monitors stay up across the whole act rather than being started and
+    stopped per step. Bounded runs made the script tidy but left the dashboard
+    stale between steps -- dead at exactly the moment an audience is looking at
+    it. Now the screen stays live and the script only handles the pauses.
+    """
+    print(f"{DIM}  {note} for {seconds:.0f}s{RESET}")
+    finish = time.time() + seconds
+    while time.time() < finish:
+        print(f"{DIM}    {lane_summary(args.mac)}{RESET}")
+        time.sleep(4)
+
+
+class MonitorHandle:
+    """Holds the running monitor so a phase can swap it in replay.
+
+    Live and replay differ here in a way worth being explicit about. Live keeps
+    ONE monitor up while you physically switch radios -- that is the demo. A
+    recording cannot be switched, so replay restarts the monitor against a
+    different file to stand in for the same change.
+    """
+
+    def __init__(self, base_command: list[str], replay: bool):
+        self.base_command = base_command
+        self.replay = replay
+        self.process: subprocess.Popen | None = None
+
+    def start(self, recording: str | None = None) -> None:
+        command = list(self.base_command)
+        if recording is not None:
+            command += ["--replay", recording]
+            if "rf_monitor.py" in " ".join(command):
+                command += ["--integration", "0.5"]
+        self.process = start_background(command, "monitor")
+
+    def switch_to(self, recording: str | None) -> None:
+        """In replay, restart against a new recording. Live monitors keep going."""
+        if not self.replay:
+            return
+        self.stop()
+        self.start(recording)
+        time.sleep(3)
+
+    def running(self) -> bool:
+        return self.process is not None and self.process.poll() is None
+
+    def stop(self) -> None:
+        if self.process is None:
+            return
+        self.process.terminate()
+        try:
+            self.process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+        self.process = None
+
+
 def act_one_rf(args) -> None:
     alert_url = f"{dashboard_url(args.mac)}/alert"
-    common = [sys.executable, "demo/rf_monitor.py", "monitor",
-              "--baseline-file", args.baseline, "--alert-url", alert_url,
-              "--nominal", str(args.nominal), "--span", str(args.span),
-              "--bin-hz", str(args.bin_hz)]
-    if args.replay:
-        common += ["--replay", args.replay_two, "--integration", "0.4"]
 
     step(1, "Baseline the authorised radio")
     instruct("Power ON radio A.  Power OFF radio B.")
@@ -275,41 +387,63 @@ def act_one_rf(args) -> None:
     if args.replay:
         baseline_command += ["--replay", args.replay_one]
     output, code = run(baseline_command, "baseline")
-    verdict(code == 0 and "Baselined 1 emitter" in output,
-            "exactly one emitter baselined (two would mean radio B was still on)")
+
+    # Real bands are not empty. Baselining whatever is already transmitting is
+    # correct -- that is the point of a baseline -- so more than one emitter is
+    # normal outdoors and only worth a note. What matters is that radio B was
+    # not among them, which is why the pause above exists.
+    baselined = 0
+    for line in output.splitlines():
+        if "Baselined" in line and "emitter" in line:
+            baselined = int(line.split("Baselined")[1].split()[0])
+    verdict(code == 0 and baselined >= 1,
+            f"{baselined} emitter(s) baselined as authorised")
+    if baselined > 1:
+        print(f"{DIM}    More than one signal is in this band. That is fine -- they "
+              f"are now the known background.{RESET}")
+        print(f"{DIM}    Just confirm radio B really was off, or it has been "
+              f"recorded as authorised and step 3 will not fire.{RESET}")
+
+    # The SDR can only be held by one process, so the monitor starts only after
+    # baselining has released it.
+    monitor = MonitorHandle(
+        [sys.executable, "demo/rf_monitor.py", "monitor",
+         "--baseline-file", args.baseline, "--alert-url", alert_url,
+         "--nominal", str(args.nominal), "--span", str(args.span),
+         "--bin-hz", str(args.bin_hz)],
+        replay=args.replay)
+    monitor.start(args.replay_one if args.replay else None)
+    time.sleep(3)
 
     step(2, "Watch with only the authorised radio")
     say("Same radio, still running. The detector should stay silent.")
     before = alert_count(args.mac)
-    if args.replay:
-        common_quiet = list(common)
-        common_quiet[common_quiet.index(args.replay_two)] = args.replay_one
-    else:
-        common_quiet = common
-    _, code = run(common_quiet + ["--max-sweeps", str(QUIET_SWEEPS)], "quiet watch")
-    check_step(code, before, alert_count(args.mac), False,
-               f"{QUIET_SWEEPS} sweeps of the authorised radio alone")
+    dwell(args, QUIET_DWELL_S, "watching")
+    check_step(0 if monitor.running() else 1,
+               before, alert_count(args.mac), False,
+               "the authorised radio alone")
 
     step(3, "Switch on the second radio")
     instruct("Power ON radio B.  Leave radio A on.")
     say("Identical firmware, identical commanded frequency. Their crystals differ.")
     before = alert_count(args.mac)
-    _, code = run(common + ["--max-sweeps", str(ALARM_SWEEPS)], "both radios")
-    check_step(code, before, alert_count(args.mac), True, "second radio")
+    monitor.switch_to(args.replay_two)
+    dwell(args, ALARM_DWELL_S, "watching")
+    check_step(0 if monitor.running() else 1,
+               before, alert_count(args.mac), True, "the second radio")
 
     step(4, "Switch the authorised radio off")
     instruct("Power OFF radio A.  Leave radio B on.")
     say("One carrier again -- the expected count. But it is the wrong one, "
         "and counting radios would say nothing.")
     before = alert_count(args.mac)
-    if args.replay:
-        common_rogue = list(common)
-        common_rogue[common_rogue.index(args.replay_two)] = args.replay_rogue
-    else:
-        common_rogue = common
-    _, code = run(common_rogue + ["--max-sweeps", str(ALARM_SWEEPS)], "rogue alone")
-    check_step(code, before, alert_count(args.mac), True,
-               "rogue alone (the case carrier counting cannot see)")
+    monitor.switch_to(args.replay_rogue)
+    dwell(args, ALARM_DWELL_S, "watching")
+    check_step(0 if monitor.running() else 1,
+               before, alert_count(args.mac), True,
+               "the rogue alone (the case carrier counting cannot see)")
+
+    monitor.stop()
 
 
 def act_two_network(args) -> None:
@@ -319,14 +453,12 @@ def act_two_network(args) -> None:
     say("The inverter calls its vendor cloud. Encrypted -- we never decrypt it. "
         "We read the envelopes.")
 
-    monitor_command = [sys.executable, "demo/tls_monitor.py",
-                       "--interface", args.interface, "--port", str(CLOUD_PORT),
-                       "--asn-map", args.asn_map, "--alert-url", alert_url,
-                       "--window", str(CAPTURE_WINDOW_S)]
-    if args.replay:
-        monitor_command += ["--replay", "demo/fallback/tls_normal.pcap"]
-    elif os.geteuid() != 0:
-        monitor_command = ["sudo"] + monitor_command
+    base = [sys.executable, "demo/tls_monitor.py",
+            "--interface", args.interface, "--port", str(CLOUD_PORT),
+            "--asn-map", args.asn_map, "--alert-url", alert_url,
+            "--window", str(CAPTURE_WINDOW_S)]
+    if not args.replay and os.geteuid() != 0:
+        base = ["sudo"] + base
 
     if not args.replay:
         start_background([sys.executable, "demo/inverter_traffic.py",
@@ -334,26 +466,39 @@ def act_two_network(args) -> None:
                           "--interval", "2"], "inverter traffic")
         time.sleep(3)
 
+    monitor = MonitorHandle(base, replay=args.replay)
+    if args.replay:
+        monitor.base_command = [a for a in base]
+        monitor.process = start_background(
+            base + ["--replay", "demo/fallback/tls_normal.pcap"], "network monitor")
+    else:
+        monitor.process = start_background(base, "network monitor")
+    time.sleep(CAPTURE_WINDOW_S + 4)
+
     before = alert_count(args.mac)
-    _, code = run(monitor_command + ["--max-windows", str(QUIET_WINDOWS)], "quiet capture")
-    check_step(code, before, alert_count(args.mac), False, "normal traffic")
+    dwell(args, QUIET_DWELL_S, "capturing")
+    check_step(0 if monitor.running() else 1,
+               before, alert_count(args.mac), False, "normal traffic")
 
     step(6, "The inverter calls somewhere it should not")
     instruct("Ready to make the unauthorised call.")
     say("Same device, one connection to a network it has no business contacting.")
 
-    if not args.replay:
-        run([sys.executable, "demo/rogue_call.py",
-             "--host", args.rogue, "--port", str(CLOUD_PORT)], "rogue call")[0]
-        rogue_monitor = monitor_command
-    else:
-        rogue_monitor = list(monitor_command)
-        rogue_monitor[rogue_monitor.index("demo/fallback/tls_normal.pcap")] = \
-            "demo/fallback/tls_rogue.pcap"
-
     before = alert_count(args.mac)
-    _, code = run(rogue_monitor + ["--max-windows", str(QUIET_WINDOWS)], "rogue capture")
-    check_step(code, before, alert_count(args.mac), True, "the unauthorised call")
+    if args.replay:
+        monitor.stop()
+        monitor.process = start_background(
+            base + ["--replay", "demo/fallback/tls_rogue.pcap"], "network monitor")
+        time.sleep(CAPTURE_WINDOW_S + 3)
+    else:
+        run([sys.executable, "demo/rogue_call.py",
+             "--host", args.rogue, "--port", str(CLOUD_PORT)], "rogue call")
+
+    dwell(args, ALARM_DWELL_S, "capturing")
+    check_step(0 if monitor.running() else 1,
+               before, alert_count(args.mac), True, "the unauthorised call")
+
+    monitor.stop()
 
 
 def main() -> int:

@@ -210,7 +210,7 @@ def run_monitor(args) -> int:
         print(f"Inventory: {len(inventory.records)} device(s), "
               f"{inventory.total_mw():.3f} MW total")
 
-    sink = AlertSink(args.alert_url, source_name="pi-rf-monitor",
+    sink = AlertSink(args.alert_url, source_name="pi-rf-monitor", layer="rf",
                      suppress_repeats_for=ALERT_REPEAT_SUPPRESSION_S,
                      identity_of=frequency_identity(SAME_EMITTER_TOLERANCE_HZ))
     if args.alert_url:
