@@ -79,6 +79,13 @@ def instruct(action: str) -> None:
     print()
     print(f"{AMBER}{BOLD}  ACTION: {action}{RESET}")
     try:
+        # Discard keystrokes typed while the previous step was running, so an
+        # impatient Return does not blow straight through this pause.
+        try:
+            import termios
+            termios.tcflush(sys.stdin, termios.TCIFLUSH)
+        except (ImportError, OSError):
+            pass
         input(f"{AMBER}  Press Return when done. {RESET}")
     except (EOFError, KeyboardInterrupt):
         print("\n  stopped")
@@ -176,22 +183,57 @@ def run(command: list[str], label: str) -> tuple[str, int]:
 
 
 def start_background(command: list[str], label: str) -> subprocess.Popen:
+    """Start a long-running helper, fully detached from this terminal.
+
+    Two details matter and both caused real failures:
+
+    stdin=DEVNULL -- a background process inheriting the terminal competes for
+    keystrokes. The Return you press to continue the demo can be swallowed by a
+    monitor instead of reaching the prompt, and a background process that reads
+    from a terminal it does not own is stopped with SIGTTIN, which looks like
+    the whole machine hanging.
+
+    start_new_session -- puts each helper in its own process group so Ctrl-C
+    reaches the runner rather than being scattered across children, and so the
+    group can be killed cleanly later. sudo in particular will not let go of a
+    shared terminal politely.
+    """
     print(f"{DIM}  starting {label} in the background{RESET}")
-    process = subprocess.Popen(command, cwd=REPO, stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL)
+    process = subprocess.Popen(command, cwd=REPO,
+                               stdin=subprocess.DEVNULL,
+                               stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL,
+                               start_new_session=True)
     background_processes.append(process)
     return process
 
 
+def _kill_group(process: subprocess.Popen) -> None:
+    """Kill a helper and anything it started.
+
+    Terminating a `sudo` process leaves the python underneath it running, so
+    the whole process group has to go -- otherwise a capture keeps running
+    after the demo ends and keeps posting to the dashboard.
+    """
+    if process.poll() is not None:
+        return
+    try:
+        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        process.terminate()
+
+
 def cleanup() -> None:
     for process in background_processes:
-        if process.poll() is None:
-            process.terminate()
+        _kill_group(process)
     for process in background_processes:
         try:
             process.wait(timeout=4)
         except subprocess.TimeoutExpired:
-            process.kill()
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                process.kill()
 
 
 # --------------------------------------------------------------------------
@@ -393,7 +435,7 @@ class MonitorHandle:
     def stop(self) -> None:
         if self.process is None:
             return
-        self.process.terminate()
+        _kill_group(self.process)
         try:
             self.process.wait(timeout=5)
         except subprocess.TimeoutExpired:
@@ -486,7 +528,10 @@ def act_two_network(args) -> None:
             "--asn-map", args.asn_map, "--alert-url", alert_url,
             "--window", str(CAPTURE_WINDOW_S)]
     if not args.replay and os.geteuid() != 0:
-        base = ["sudo"] + base
+        # -n: never prompt. Passwordless sudo is configured, and a sudo that
+        # decides to ask for a password on a terminal the runner is also using
+        # deadlocks the demo.
+        base = ["sudo", "-n"] + base
 
     if not args.replay:
         cloud_host = args.cloud_ip or args.mac
