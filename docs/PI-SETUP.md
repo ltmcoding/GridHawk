@@ -218,11 +218,20 @@ If that works, the Pi is fully set up. Everything from here is hardware.
 Attach the RTL-SDR to a **blue USB 3 port** (the Pi 5 has two blue, two black).
 
 ```bash
-rtl_test -t
+rtl_test
 ```
 
-Expect something like `Found 1 device(s): 0: Realtek, RTL2838UHIDIR`. Press
-Ctrl-C after a few seconds.
+Expect `Found 1 device(s)` naming your dongle and its tuner. Ctrl-C after a few
+seconds.
+
+Do **not** use `rtl_test -t`. That flag runs a check specific to the old E4000
+tuner and ends with `No E4000 tuner found, aborting` on every modern dongle,
+which reads like a failure and is not one.
+
+If yours reports **RTL-SDR Blog V4**, note that the V4 needs librtlsdr 2.0 or
+newer to tune correctly. Debian trixie ships 2.0.2, so it works; on an older
+release the device enumerates but tunes to the wrong frequency, which is a
+nasty silent failure.
 
 - `No supported devices found` → unplug and replug; confirm step 6 ran.
 - `usb_claim_interface error -6` → the TV driver still has it; recheck step 6.
