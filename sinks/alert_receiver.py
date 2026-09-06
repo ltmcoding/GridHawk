@@ -106,27 +106,25 @@ PAGE = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GridHawk</title>
 <style>
-  /* Instrument, not web page. The palette is a spectrum-analyser display:
-     a near-black enclosure, a faint graticule, and a cold-to-hot ramp for
-     signal strength -- the convention SDR waterfalls already use. Signals we
-     recognise sit on that ramp; anything unaccounted breaks it and goes red. */
+  /* Restraint is the idea. One accent, used only where it carries meaning:
+     everything the system recognises is rendered in near-white, and only the
+     thing it cannot account for takes colour. Space and type scale do the rest
+     of the work, so the page reads composed rather than busy. */
   :root {
-    --enclosure:  #070b10;
-    --panel:      #0b1219;
-    --graticule:  #16222e;
-    --rule:       #1c2836;
-    --ink:        #e6edf3;
-    --ink-dim:    #6b8299;
-    --ink-faint:  #3f5568;
+    --ground:   #0f1215;
+    --lift:     rgba(255,255,255,0.022);
+    --lift-2:   rgba(255,255,255,0.04);
+    --hairline: rgba(255,255,255,0.07);
 
-    --cold:       #2e6ba8;
-    --mid:        #4fc3e8;
-    --hot:        #a8f0ff;
+    --ink:      #f2f4f5;
+    --ink-mid:  #949ca3;
+    --ink-dim:  #5d666d;
 
-    --quiet:      #3dd9a4;
-    --attention:  #f0b429;
-    --alarm:      #ff3b30;
-    --alarm-core: #ffd5d2;
+    --signal:   #e8eaed;
+    --accent:   #ff5b49;
+    --accent-d: rgba(255,91,73,0.16);
+    --ok:       #5fd9a8;
+    --warn:     #f5c451;
   }
 
   * { box-sizing: border-box; }
@@ -134,159 +132,133 @@ PAGE = """<!doctype html>
   body {
     margin: 0; min-height: 100vh;
     display: flex; flex-direction: column;
-    background: var(--enclosure);
+    background: var(--ground);
     color: var(--ink);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     font-variant-numeric: tabular-nums;
     -webkit-font-smoothing: antialiased;
+    letter-spacing: -0.006em;
   }
 
   /* --- header ------------------------------------------------------- */
   header {
-    display: flex; align-items: center; gap: 24px;
-    padding: 14px 26px; border-bottom: 1px solid var(--rule);
-    background: var(--panel);
+    display: flex; align-items: center; gap: 22px;
+    padding: 34px 48px 30px;
   }
-  .wordmark {
-    font-size: 13px; font-weight: 600; color: var(--ink-dim);
-    letter-spacing: 0.06em;
-  }
+  .wordmark { font-size: 13px; font-weight: 600; color: var(--ink-dim); }
 
-  /* An annunciator tile, the way a control room signals a fault: dark and
-     inert until something is wrong, then lit. */
-  .annunciator {
-    display: inline-flex; align-items: center; gap: 11px;
-    padding: 9px 18px; border-radius: 2px;
-    border: 1px solid var(--rule); background: #0a1017;
-    font-size: 26px; font-weight: 500; letter-spacing: -0.01em;
-    transition: background 200ms, border-color 200ms, box-shadow 200ms;
+  .state { display: flex; align-items: center; gap: 14px; }
+  .lamp {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--ink-dim); flex: none;
   }
-  .annunciator .lamp {
-    width: 9px; height: 9px; border-radius: 50%;
-    background: var(--ink-faint); flex: none;
-  }
-  .annunciator.quiet { color: var(--quiet); border-color: #14372c; }
-  .annunciator.quiet .lamp { background: var(--quiet); box-shadow: 0 0 10px var(--quiet); }
-  .annunciator.alarm {
-    color: var(--alarm-core); border-color: #4a1512; background: #170a0a;
-    box-shadow: inset 0 0 40px rgba(255,59,48,.14);
-  }
-  .annunciator.alarm .lamp { background: var(--alarm); box-shadow: 0 0 14px var(--alarm); }
-  .annunciator.attention { color: var(--attention); border-color: #3d2f0d; }
-  .annunciator.attention .lamp { background: var(--attention); box-shadow: 0 0 10px var(--attention); }
-  .annunciator.offline { color: var(--ink-dim); }
+  .state.quiet .lamp { background: var(--ok);     box-shadow: 0 0 0 5px rgba(95,217,168,.12); }
+  .state.alarm .lamp { background: var(--accent); box-shadow: 0 0 0 5px var(--accent-d); }
+  .state.attention .lamp { background: var(--warn); box-shadow: 0 0 0 5px rgba(245,196,81,.12); }
+
+  .headline { font-size: 34px; font-weight: 300; letter-spacing: -0.025em; }
+  .state.alarm .headline { color: var(--accent); }
+  .state.offline .headline { color: var(--ink-mid); }
 
   .census {
     margin-left: auto; text-align: right;
-    font-size: 12px; color: var(--ink-dim); line-height: 1.7;
+    font-size: 12px; color: var(--ink-dim); line-height: 1.8;
   }
 
   /* --- lanes -------------------------------------------------------- */
   .lanes {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
-    gap: 1px; background: var(--rule);
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(460px, 1fr));
+    gap: 20px; padding: 0 48px 40px;
   }
-  .lane { background: var(--enclosure); padding: 18px 26px 20px; }
+  .lane { min-width: 0; overflow: hidden; }
   .lane-head {
-    display: flex; align-items: baseline; gap: 11px;
-    flex-wrap: wrap; margin-bottom: 14px;
+    display: flex; align-items: baseline; gap: 12px;
+    flex-wrap: wrap; margin-bottom: 20px;
   }
-  .lane-title { font-size: 15px; font-weight: 600; white-space: nowrap; }
-  .lane-sub { font-size: 12px; color: var(--ink-faint); white-space: nowrap; }
-  .lane-condition {
-    margin-left: auto; font-size: 12px; font-weight: 500; white-space: nowrap;
-    display: inline-flex; align-items: center; gap: 7px;
+  .lane-title { font-size: 14px; font-weight: 600; white-space: nowrap; }
+  .lane-sub { font-size: 13px; color: var(--ink-dim); white-space: nowrap; }
+  .lane-status {
+    margin-left: auto; font-size: 12px; font-weight: 500;
+    color: var(--ink-mid); white-space: nowrap;
   }
-  .lane-condition .lamp { width: 6px; height: 6px; border-radius: 50%; }
-  .lane-condition.quiet { color: var(--quiet); }
-  .lane-condition.quiet .lamp { background: var(--quiet); box-shadow: 0 0 7px var(--quiet); }
-  .lane-condition.alarm { color: var(--alarm); }
-  .lane-condition.alarm .lamp { background: var(--alarm); box-shadow: 0 0 9px var(--alarm); }
-  .lane-condition.offline { color: var(--ink-faint); }
-  .lane-condition.offline .lamp { background: var(--ink-faint); }
+  .lane-status.alarm { color: var(--accent); }
 
-  /* --- the instrument face ------------------------------------------ */
+  /* --- the trace ---------------------------------------------------- */
   .scope {
-    position: relative; background: var(--panel);
-    border: 1px solid var(--rule); border-radius: 2px; padding: 8px 8px 4px;
+    background: var(--lift); border-radius: 14px;
+    padding: 20px 22px 14px; margin-bottom: 26px;
   }
-  .spectrum { width: 100%; height: 178px; display: block; }
-  .grat        { stroke: var(--graticule); stroke-width: 1; }
-  .grat-major  { stroke: var(--rule); stroke-width: 1; }
-  .grat-label  { fill: var(--ink-faint); font-size: 9px; }
-  .trace-cap   { stroke: none; }
-
+  .spectrum { width: 100%; height: 190px; display: block; }
+  .ref { stroke: rgba(255,255,255,0.05); stroke-width: 1; }
   .axis {
     display: flex; justify-content: space-between;
-    font-size: 11px; color: var(--ink-faint); margin-top: 6px;
-    padding: 0 2px;
+    font-size: 11px; color: var(--ink-dim); margin-top: 10px;
   }
-  .axis-span { color: var(--graticule); }
 
   /* --- readouts ----------------------------------------------------- */
-  .readout { margin-top: 14px; }
-  .carrier {
-    display: flex; align-items: baseline; gap: 14px;
-    padding: 6px 0; border-bottom: 1px solid var(--rule);
-  }
+  .carrier { padding: 14px 0; border-bottom: 1px solid var(--hairline); }
   .carrier:last-child { border-bottom: none; }
-  .freq { font-size: 26px; font-weight: 300; letter-spacing: -0.01em; }
-  .freq.unknown { color: var(--alarm-core); font-weight: 400; }
-  .ppm { font-size: 14px; color: var(--ink-dim); }
-  .tag { margin-left: auto; font-size: 11px; color: var(--ink-faint); }
-  .tag.unknown { color: var(--alarm); font-weight: 600; }
+  .carrier-top { display: flex; align-items: baseline; gap: 16px; }
+  .freq {
+    font-size: 52px; font-weight: 200; letter-spacing: -0.035em;
+    line-height: 1; color: var(--signal);
+  }
+  .freq.unknown { color: var(--accent); }
+  .ppm { font-size: 15px; color: var(--ink-mid); }
+  .tag { margin-left: auto; font-size: 12px; color: var(--ink-dim); }
+  .tag.unknown { color: var(--accent); font-weight: 600; }
 
-  .sessions { width: 100%; border-collapse: collapse; font-size: 13px; }
-  .sessions td { padding: 7px 0 5px; border-bottom: 1px solid var(--rule); }
-  .sessions td.net { color: var(--ink-faint); font-size: 12px; }
-  .sessions td.bytes { text-align: right; color: var(--ink-dim); }
-  .sessions tr.flagged td { color: var(--alarm); }
+  .sessions {
+    width: 100%; border-collapse: collapse; font-size: 14px;
+    table-layout: fixed;
+  }
+  .sessions td { padding: 13px 0 6px; overflow: hidden; text-overflow: ellipsis; }
+  .sessions td.dst { width: 42%; white-space: nowrap; }
+  .sessions td.net {
+    color: var(--ink-dim); font-size: 13px; width: 38%;
+    white-space: nowrap;
+  }
+  .sessions td.bytes { text-align: right; color: var(--ink-mid); width: 20%; }
+  .sessions tr.flagged td { color: var(--accent); }
+  .vol { padding: 0 0 12px !important; border-bottom: 1px solid var(--hairline); }
+  .vol-track { height: 2px; background: var(--lift-2); border-radius: 2px; }
+  .vol-fill { height: 2px; border-radius: 2px; background: var(--ink-dim); }
+  tr.flagged .vol-fill { background: var(--accent); }
 
-  /* Session size drawn to scale. A firmware pull is an order of magnitude
-     larger than a heartbeat, and that is one of the four things the detector
-     watches -- worth seeing rather than reading. */
-  .vol { padding-top: 0 !important; border-bottom: none !important; }
-  .vol-track { height: 3px; background: var(--graticule); border-radius: 2px; }
-  .vol-fill { height: 3px; border-radius: 2px; background: var(--cold); }
-  tr.flagged .vol-fill { background: var(--alarm); }
-
-  .summary { margin-top: 12px; font-size: 12px; color: var(--ink-faint); }
-  .empty { color: var(--ink-faint); font-size: 13px; padding: 24px 0; }
-  .lane-body.stale { opacity: 0.28; filter: saturate(0.25); }
+  .summary { margin-top: 18px; font-size: 13px; color: var(--ink-dim); }
+  .empty { color: var(--ink-dim); font-size: 14px; padding: 40px 0; }
+  .lane-body.stale { opacity: 0.3; }
 
   /* --- alerts ------------------------------------------------------- */
-  .alerts {
-    border-top: 1px solid var(--rule); padding: 14px 26px 22px;
-    flex: 1; background: var(--panel);
-  }
-  .alerts h2 {
-    font-size: 12px; font-weight: 600; color: var(--ink-faint);
-    margin: 0 0 10px; letter-spacing: 0.04em;
-  }
+  .alerts { padding: 28px 48px 44px; border-top: 1px solid var(--hairline); flex: 1; }
+  .alerts h2 { font-size: 13px; font-weight: 600; color: var(--ink-dim); margin: 0 0 6px; }
   .alert-row {
-    display: flex; align-items: baseline; gap: 16px;
-    padding: 9px 0; border-bottom: 1px solid var(--rule); font-size: 14px;
+    display: flex; align-items: baseline; gap: 20px;
+    padding: 16px 0; border-bottom: 1px solid var(--hairline); font-size: 15px;
   }
-  .alert-time { color: var(--ink-faint); font-size: 12px; width: 66px; flex: none; }
-  .alert-sev { width: 66px; flex: none; font-weight: 600; font-size: 12px; }
-  .alert-sev.critical, .alert-sev.high { color: var(--alarm); }
-  .alert-sev.medium { color: var(--attention); }
-  .alert-sev.low, .alert-sev.info { color: var(--ink-dim); }
-  .alert-what { font-weight: 500; width: 190px; flex: none; }
-  .alert-detail { color: var(--ink-dim); font-size: 13px; }
+  .alert-row:last-child { border-bottom: none; }
+  .alert-time { color: var(--ink-dim); font-size: 13px; width: 70px; flex: none; }
+  .alert-sev { width: 70px; flex: none; font-weight: 600; font-size: 13px; color: var(--ink-mid); }
+  .alert-sev.critical, .alert-sev.high { color: var(--accent); }
+  .alert-sev.medium { color: var(--warn); }
+  .alert-what { font-weight: 500; width: 210px; flex: none; }
+  .alert-detail { color: var(--ink-mid); font-size: 14px; }
 
-  @keyframes arrive {
-    from { opacity: 0; background: rgba(255,59,48,.12); }
-  }
-  .alert-row.new { animation: arrive 500ms ease-out; }
+  @keyframes arrive { from { opacity: 0; transform: translateY(-4px); } }
+  .alert-row.new { animation: arrive 420ms cubic-bezier(.2,.7,.3,1); }
   @media (prefers-reduced-motion: reduce) { .alert-row.new { animation: none; } }
+
+  @media (max-width: 720px) {
+    header, .lanes, .alerts { padding-left: 24px; padding-right: 24px; }
+    .freq { font-size: 40px; }
+  }
 </style>
 </head>
 <body>
   <header>
     <span class="wordmark">GridHawk</span>
-    <span class="annunciator quiet" id="annunciator">
-      <span class="lamp"></span><span id="headline">Starting</span>
+    <span class="state quiet" id="state">
+      <span class="lamp"></span><span class="headline" id="headline">Starting</span>
     </span>
     <div class="census" id="census"></div>
   </header>
@@ -298,30 +270,18 @@ PAGE = """<!doctype html>
 
 <script>
 const POLL_MS = __POLL_MS__;
-const TRAIL_LENGTH = 18;          // sweeps of persistence kept behind the trace
+const TRAIL_LENGTH = 14;
 let seenAlerts = new Set();
-let trail = [];                   // recent carrier snapshots, newest last
+let trail = [];
 
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"]/g, c =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
-function conditionWord(c) {
+function statusWord(c) {
   return { quiet: "Clear", alarm: "Unaccounted emitter",
            offline: "Not reporting", attention: "Degraded" }[c] || c;
-}
-
-/* Signal strength maps onto a cold-to-hot ramp, the convention SDR waterfall
-   displays already use. Anything unaccounted leaves the ramp entirely. */
-function traceColour(overFloorDb, known) {
-  if (!known) return "#ff3b30";
-  const t = Math.max(0, Math.min(1, (overFloorDb || 0) / 45));
-  const stops = [[46,107,168], [79,195,232], [168,240,255]];
-  const i = t < 0.5 ? 0 : 1;
-  const f = t < 0.5 ? t * 2 : (t - 0.5) * 2;
-  const c = stops[i].map((v, k) => Math.round(v + (stops[i+1][k] - v) * f));
-  return `rgb(${c[0]},${c[1]},${c[2]})`;
 }
 
 function spectrumWindow(carriers, low, high) {
@@ -329,70 +289,83 @@ function spectrumWindow(carriers, low, high) {
   const freqs = carriers.map(c => c.freq_hz);
   const lo = Math.min(...freqs), hi = Math.max(...freqs);
   const centre = (lo + hi) / 2;
-  const width = Math.max(6000, (hi - lo) * 4);
-  return [centre - width / 2, centre + width / 2];
+  return [centre - Math.max(6000, (hi - lo) * 4) / 2,
+          centre + Math.max(6000, (hi - lo) * 4) / 2];
 }
 
-/* The instrument face: a calibrated graticule, recent sweeps fading behind the
-   current one, and the live trace on top. Persistence is not decoration -- it
-   is how thermal drift becomes visible. A carrier that is warming up leaves a
-   trail; a stable one draws a single clean line. */
+/* A filled peak with a soft falloff rather than a hard spike. Real signals
+   have skirts, so this is both truer to the measurement and quieter to look
+   at than a forest of lines. Recent sweeps sit behind at low opacity, which
+   is how thermal drift becomes visible: a warming transmitter smears, a
+   settled one draws one clean peak. */
+function peakPath(x, y, base, halfWidth) {
+  const w = halfWidth;
+  return `M ${(x - w).toFixed(1)} ${base}
+          C ${(x - w * 0.45).toFixed(1)} ${base}
+            ${(x - w * 0.28).toFixed(1)} ${y.toFixed(1)}
+            ${x.toFixed(1)} ${y.toFixed(1)}
+          C ${(x + w * 0.28).toFixed(1)} ${y.toFixed(1)}
+            ${(x + w * 0.45).toFixed(1)} ${base}
+            ${(x + w).toFixed(1)} ${base} Z`;
+}
+
 function spectrum(detail) {
   const carriers = detail.carriers || [];
   const [low, high] = spectrumWindow(carriers, detail.low_hz || 0, detail.high_hz || 1);
-  const W = 1000, H = 178, L = 34, R = 8, T = 10, B = 22;
-  const plotW = W - L - R, plotH = H - T - B, base = T + plotH;
+  const W = 1000, H = 190, T = 12, B = 8;
+  const plotH = H - T - B, base = T + plotH;
 
   let svg = `<svg class="spectrum" viewBox="0 0 ${W} ${H}"
                   preserveAspectRatio="none" role="img"
-                  aria-label="${carriers.length} carriers on a calibrated spectrum">`;
+                  aria-label="${carriers.length} carriers detected">
+    <defs>
+      <linearGradient id="fillKnown" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%"   stop-color="#e8eaed" stop-opacity="0.30"/>
+        <stop offset="100%" stop-color="#e8eaed" stop-opacity="0"/>
+      </linearGradient>
+      <linearGradient id="fillUnknown" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%"   stop-color="#ff5b49" stop-opacity="0.42"/>
+        <stop offset="100%" stop-color="#ff5b49" stop-opacity="0"/>
+      </linearGradient>
+    </defs>`;
 
-  // graticule: 10 vertical divisions, 5 horizontal, labelled in dB over floor
-  for (let i = 0; i <= 10; i++) {
-    const x = L + (plotW / 10) * i;
-    svg += `<line class="${i % 5 === 0 ? "grat-major" : "grat"}"
-                  x1="${x}" y1="${T}" x2="${x}" y2="${base}"/>`;
+  // three faint reference lines, not a full grid
+  for (let i = 1; i <= 3; i++) {
+    const y = T + (plotH / 4) * i;
+    svg += `<line class="ref" x1="0" y1="${y}" x2="${W}" y2="${y}"/>`;
   }
-  for (let i = 0; i <= 5; i++) {
-    const y = T + (plotH / 5) * i;
-    const db = 45 - i * 9;
-    svg += `<line class="${i === 5 ? "grat-major" : "grat"}"
-                  x1="${L}" y1="${y}" x2="${W - R}" y2="${y}"/>`;
-    svg += `<text class="grat-label" x="${L - 6}" y="${y + 3}"
-                  text-anchor="end">${db}</text>`;
-  }
-  svg += `<text class="grat-label" x="4" y="${T + 4}">dB</text>`;
+  svg += `<line class="ref" x1="0" y1="${base}" x2="${W}" y2="${base}"/>`;
 
-  const plot = (list, opacity, widthPx) => {
+  const draw = (list, opacity, stroked) => {
     let out = "";
     for (const c of list) {
-      const x = L + ((c.freq_hz - low) / (high - low)) * plotW;
-      if (x < L || x > W - R) continue;
+      const x = ((c.freq_hz - low) / (high - low)) * W;
+      if (x < -40 || x > W + 40) continue;
       const over = Math.max(0, Math.min(1, (c.over_floor_db || 0) / 45));
-      const y = base - Math.max(6, over * plotH);
-      const colour = traceColour(c.over_floor_db, c.known);
-      out += `<line x1="${x.toFixed(1)}" y1="${base}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}"
-                    stroke="${colour}" stroke-width="${widthPx}" opacity="${opacity}"/>`;
-      if (opacity === 1) {
-        out += `<circle class="trace-cap" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}"
-                        r="4.5" fill="${colour}"/>`;
+      const y = base - Math.max(10, over * plotH);
+      const fill = c.known ? "url(#fillKnown)" : "url(#fillUnknown)";
+      const line = c.known ? "#e8eaed" : "#ff5b49";
+      const path = peakPath(x, y, base, 46);
+      out += `<path d="${path}" fill="${fill}" opacity="${opacity}"/>`;
+      if (stroked) {
+        out += `<path d="${path}" fill="none" stroke="${line}"
+                      stroke-width="1.6" stroke-linejoin="round" opacity="${opacity}"/>`;
       }
     }
     return out;
   };
 
-  // older sweeps first, so the live trace draws over them
   trail.forEach((snapshot, index) => {
     const age = (index + 1) / (trail.length + 1);
-    svg += plot(snapshot, (age * 0.30).toFixed(3), 1.5);
+    svg += draw(snapshot, (age * 0.22).toFixed(3), false);
   });
-  svg += plot(carriers, 1, 3.5);
+  svg += draw(carriers, 1, true);
   svg += `</svg>`;
 
   const mhz = hz => (hz / 1e6).toFixed(4);
   svg += `<div class="axis">
             <span>${mhz(low)} MHz</span>
-            <span class="axis-span">${((high - low) / 1000).toFixed(1)} kHz span</span>
+            <span>${((high - low) / 1000).toFixed(1)} kHz</span>
             <span>${mhz(high)} MHz</span>
           </div>`;
   return `<div class="scope">${svg}</div>`;
@@ -406,17 +379,15 @@ function rfLane(lane) {
   }
 
   let html = spectrum(d);
-  html += `<div class="readout">`;
   for (const c of carriers) {
     const u = c.known ? "" : " unknown";
-    html += `<div class="carrier">
+    html += `<div class="carrier"><div class="carrier-top">
       <span class="freq${u}">${(c.freq_hz / 1e6).toFixed(6)}</span>
       <span class="ppm">${c.ppm >= 0 ? "+" : ""}${Number(c.ppm).toFixed(2)} ppm</span>
       <span class="tag${u}">${c.known ? "baselined" : "unaccounted"}</span>
-    </div>`;
+    </div></div>`;
   }
   if (!carriers.length) html += `<div class="empty">Band clear. No carriers above the floor.</div>`;
-  html += `</div>`;
 
   const bits = [];
   if (d.sweeps) bits.push(`${d.sweeps} sweeps`);
@@ -434,22 +405,20 @@ function networkLane(lane) {
   }
   if (!sessions.length) return `<div class="empty">No outbound sessions in this window.</div>`;
 
-  const shown = sessions.slice(0, 9);
+  const shown = sessions.slice(0, 8);
   const largest = Math.max(...shown.map(s => s.bytes), 1);
-
   let html = `<table class="sessions">`;
   for (const s of shown) {
-    const width = Math.max(1, (s.bytes / largest) * 100);
-    html += `<tr class="${s.allowed ? "" : "flagged"}">
-      <td>${esc(s.dst)}</td>
+    const width = Math.max(1.5, (s.bytes / largest) * 100);
+    const cls = s.allowed ? "" : "flagged";
+    html += `<tr class="${cls}">
+      <td class="dst">${esc(s.dst)}</td>
       <td class="net">${esc(s.asn_name)} ${esc(s.cc)}</td>
       <td class="bytes">${Number(s.bytes).toLocaleString()} B</td>
     </tr>
-    <tr class="${s.allowed ? "" : "flagged"}">
-      <td class="vol" colspan="3">
-        <div class="vol-track"><div class="vol-fill" style="width:${width.toFixed(1)}%"></div></div>
-      </td>
-    </tr>`;
+    <tr class="${cls}"><td class="vol" colspan="3">
+      <div class="vol-track"><div class="vol-fill" style="width:${width.toFixed(1)}%"></div></div>
+    </td></tr>`;
   }
   html += `</table>`;
   const flagged = sessions.filter(s => !s.allowed).length;
@@ -467,7 +436,7 @@ function render(state) {
   }
 
   document.getElementById("headline").textContent = state.headline;
-  document.getElementById("annunciator").className = "annunciator " + state.condition;
+  document.getElementById("state").className = "state " + state.condition;
 
   const reporting = state.lanes.filter(l => l.condition !== "offline").length;
   document.getElementById("census").innerHTML =
@@ -478,9 +447,7 @@ function render(state) {
       <div class="lane-head">
         <span class="lane-title">${esc(lane.title)}</span>
         <span class="lane-sub">${esc(lane.subtitle)}</span>
-        <span class="lane-condition ${lane.condition}">
-          <span class="lamp"></span>${conditionWord(lane.condition)}
-        </span>
+        <span class="lane-status ${lane.condition}">${statusWord(lane.condition)}</span>
       </div>
       <div class="lane-body${lane.condition === "offline" ? " stale" : ""}">
         ${lane.source === "rf" ? rfLane(lane) : networkLane(lane)}
@@ -508,7 +475,7 @@ async function poll() {
   try {
     const r = await fetch("/state.json", { cache: "no-store" });
     render(await r.json());
-  } catch (e) { /* hold the last good frame rather than blanking the screen */ }
+  } catch (e) { /* hold the last good frame */ }
 }
 poll();
 setInterval(poll, POLL_MS);
