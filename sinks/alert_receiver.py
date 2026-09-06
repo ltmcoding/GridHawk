@@ -106,16 +106,27 @@ PAGE = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>GridHawk</title>
 <style>
+  /* Instrument, not web page. The palette is a spectrum-analyser display:
+     a near-black enclosure, a faint graticule, and a cold-to-hot ramp for
+     signal strength -- the convention SDR waterfalls already use. Signals we
+     recognise sit on that ramp; anything unaccounted breaks it and goes red. */
   :root {
-    --ground:    #16212b;
-    --panel:     #1d2b37;
-    --rule:      #2c3e4c;
-    --ink:       #dce6ed;
-    --ink-dim:   #7e93a3;
-    --quiet:     #57c4a8;
-    --attention: #ffb020;
-    --alarm:     #ff5c5c;
-    --known:     #7fb3d5;
+    --enclosure:  #070b10;
+    --panel:      #0b1219;
+    --graticule:  #16222e;
+    --rule:       #1c2836;
+    --ink:        #e6edf3;
+    --ink-dim:    #6b8299;
+    --ink-faint:  #3f5568;
+
+    --cold:       #2e6ba8;
+    --mid:        #4fc3e8;
+    --hot:        #a8f0ff;
+
+    --quiet:      #3dd9a4;
+    --attention:  #f0b429;
+    --alarm:      #ff3b30;
+    --alarm-core: #ffd5d2;
   }
 
   * { box-sizing: border-box; }
@@ -123,7 +134,7 @@ PAGE = """<!doctype html>
   body {
     margin: 0; min-height: 100vh;
     display: flex; flex-direction: column;
-    background: var(--ground);
+    background: var(--enclosure);
     color: var(--ink);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     font-variant-numeric: tabular-nums;
@@ -132,184 +143,259 @@ PAGE = """<!doctype html>
 
   /* --- header ------------------------------------------------------- */
   header {
-    display: flex; align-items: baseline; gap: 28px;
-    padding: 16px 28px; border-bottom: 1px solid var(--rule);
+    display: flex; align-items: center; gap: 24px;
+    padding: 14px 26px; border-bottom: 1px solid var(--rule);
+    background: var(--panel);
   }
-  .wordmark { font-size: 15px; font-weight: 600; letter-spacing: 0.02em; color: var(--ink-dim); }
-  .headline { font-size: 40px; font-weight: 600; letter-spacing: -0.02em; line-height: 1; }
-  .headline.quiet     { color: var(--quiet); }
-  .headline.alarm     { color: var(--alarm); }
-  .headline.attention { color: var(--attention); }
-  .headline.offline   { color: var(--ink-dim); }
-  .census { margin-left: auto; text-align: right; font-size: 13px; color: var(--ink-dim); line-height: 1.6; }
+  .wordmark {
+    font-size: 13px; font-weight: 600; color: var(--ink-dim);
+    letter-spacing: 0.06em;
+  }
+
+  /* An annunciator tile, the way a control room signals a fault: dark and
+     inert until something is wrong, then lit. */
+  .annunciator {
+    display: inline-flex; align-items: center; gap: 11px;
+    padding: 9px 18px; border-radius: 2px;
+    border: 1px solid var(--rule); background: #0a1017;
+    font-size: 26px; font-weight: 500; letter-spacing: -0.01em;
+    transition: background 200ms, border-color 200ms, box-shadow 200ms;
+  }
+  .annunciator .lamp {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--ink-faint); flex: none;
+  }
+  .annunciator.quiet { color: var(--quiet); border-color: #14372c; }
+  .annunciator.quiet .lamp { background: var(--quiet); box-shadow: 0 0 10px var(--quiet); }
+  .annunciator.alarm {
+    color: var(--alarm-core); border-color: #4a1512; background: #170a0a;
+    box-shadow: inset 0 0 40px rgba(255,59,48,.14);
+  }
+  .annunciator.alarm .lamp { background: var(--alarm); box-shadow: 0 0 14px var(--alarm); }
+  .annunciator.attention { color: var(--attention); border-color: #3d2f0d; }
+  .annunciator.attention .lamp { background: var(--attention); box-shadow: 0 0 10px var(--attention); }
+  .annunciator.offline { color: var(--ink-dim); }
+
+  .census {
+    margin-left: auto; text-align: right;
+    font-size: 12px; color: var(--ink-dim); line-height: 1.7;
+  }
 
   /* --- lanes -------------------------------------------------------- */
-  /* Two lanes wherever there is room for them, one when there is not. A fixed
-     breakpoint guesses at the display; this measures it. Side by side is the
-     point -- the layers are independent, and seeing one fire while the other
-     stays clear is the argument. */
   .lanes {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
     gap: 1px; background: var(--rule);
   }
-  .lane { background: var(--ground); padding: 20px 28px 22px; }
-  /* Phrases wrap as whole phrases, never mid-label. A lane header reading
-     "RF / spectrum" over two lines is the sort of thing that only shows up at
-     the width you did not test. */
+  .lane { background: var(--enclosure); padding: 18px 26px 20px; }
   .lane-head {
-    display: flex; align-items: baseline; gap: 12px;
-    flex-wrap: wrap; margin-bottom: 16px;
+    display: flex; align-items: baseline; gap: 11px;
+    flex-wrap: wrap; margin-bottom: 14px;
   }
-  .lane-title { font-size: 17px; font-weight: 600; white-space: nowrap; }
-  .lane-sub { font-size: 13px; color: var(--ink-dim); white-space: nowrap; }
+  .lane-title { font-size: 15px; font-weight: 600; white-space: nowrap; }
+  .lane-sub { font-size: 12px; color: var(--ink-faint); white-space: nowrap; }
   .lane-condition {
-    margin-left: auto; font-size: 13px; font-weight: 500; white-space: nowrap;
+    margin-left: auto; font-size: 12px; font-weight: 500; white-space: nowrap;
+    display: inline-flex; align-items: center; gap: 7px;
   }
-  .lane-condition.quiet   { color: var(--quiet); }
-  .lane-condition.alarm   { color: var(--alarm); }
-  .lane-condition.offline { color: var(--ink-dim); }
+  .lane-condition .lamp { width: 6px; height: 6px; border-radius: 50%; }
+  .lane-condition.quiet { color: var(--quiet); }
+  .lane-condition.quiet .lamp { background: var(--quiet); box-shadow: 0 0 7px var(--quiet); }
+  .lane-condition.alarm { color: var(--alarm); }
+  .lane-condition.alarm .lamp { background: var(--alarm); box-shadow: 0 0 9px var(--alarm); }
+  .lane-condition.offline { color: var(--ink-faint); }
+  .lane-condition.offline .lamp { background: var(--ink-faint); }
 
-  /* --- spectrum ----------------------------------------------------- */
-  .spectrum { width: 100%; height: 156px; display: block; }
-  .axis-line     { stroke: var(--rule); stroke-width: 1; }
-  .spike-known   { stroke: var(--known); stroke-width: 4; }
-  .spike-unknown { stroke: var(--alarm); stroke-width: 4; }
-  .cap-known     { fill: var(--known); }
-  .cap-unknown   { fill: var(--alarm); }
+  /* --- the instrument face ------------------------------------------ */
+  .scope {
+    position: relative; background: var(--panel);
+    border: 1px solid var(--rule); border-radius: 2px; padding: 8px 8px 4px;
+  }
+  .spectrum { width: 100%; height: 178px; display: block; }
+  .grat        { stroke: var(--graticule); stroke-width: 1; }
+  .grat-major  { stroke: var(--rule); stroke-width: 1; }
+  .grat-label  { fill: var(--ink-faint); font-size: 9px; }
+  .trace-cap   { stroke: none; }
+
   .axis {
     display: flex; justify-content: space-between;
-    font-size: 12px; color: var(--ink-dim); margin-top: 2px;
+    font-size: 11px; color: var(--ink-faint); margin-top: 6px;
+    padding: 0 2px;
   }
-  .axis-span { color: var(--rule); }
-
-  /* A monitor that has stopped reporting must not look like one that is
-     reporting good news. Its last frame stays visible for context, but
-     visibly as history. */
-  .lane-body.stale { opacity: 0.32; filter: saturate(0.3); }
+  .axis-span { color: var(--graticule); }
 
   /* --- readouts ----------------------------------------------------- */
-  .readout { margin-top: 16px; }
+  .readout { margin-top: 14px; }
   .carrier {
-    display: flex; align-items: baseline; gap: 16px;
-    padding: 7px 0; border-bottom: 1px solid var(--rule);
+    display: flex; align-items: baseline; gap: 14px;
+    padding: 6px 0; border-bottom: 1px solid var(--rule);
   }
   .carrier:last-child { border-bottom: none; }
-  .freq { font-size: 22px; font-weight: 500; }
-  .freq.unknown { color: var(--alarm); }
-  .ppm  { font-size: 15px; color: var(--ink-dim); }
-  .tag  { margin-left: auto; font-size: 12px; color: var(--ink-dim); }
+  .freq { font-size: 26px; font-weight: 300; letter-spacing: -0.01em; }
+  .freq.unknown { color: var(--alarm-core); font-weight: 400; }
+  .ppm { font-size: 14px; color: var(--ink-dim); }
+  .tag { margin-left: auto; font-size: 11px; color: var(--ink-faint); }
   .tag.unknown { color: var(--alarm); font-weight: 600; }
 
-  .sessions { width: 100%; border-collapse: collapse; font-size: 14px; }
-  .sessions td { padding: 7px 0; border-bottom: 1px solid var(--rule); }
-  .sessions td.net { color: var(--ink-dim); }
+  .sessions { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .sessions td { padding: 7px 0 5px; border-bottom: 1px solid var(--rule); }
+  .sessions td.net { color: var(--ink-faint); font-size: 12px; }
   .sessions td.bytes { text-align: right; color: var(--ink-dim); }
   .sessions tr.flagged td { color: var(--alarm); }
 
-  .summary { margin-top: 14px; font-size: 14px; color: var(--ink-dim); }
-  .empty { color: var(--ink-dim); font-size: 14px; padding: 28px 0; }
+  /* Session size drawn to scale. A firmware pull is an order of magnitude
+     larger than a heartbeat, and that is one of the four things the detector
+     watches -- worth seeing rather than reading. */
+  .vol { padding-top: 0 !important; border-bottom: none !important; }
+  .vol-track { height: 3px; background: var(--graticule); border-radius: 2px; }
+  .vol-fill { height: 3px; border-radius: 2px; background: var(--cold); }
+  tr.flagged .vol-fill { background: var(--alarm); }
+
+  .summary { margin-top: 12px; font-size: 12px; color: var(--ink-faint); }
+  .empty { color: var(--ink-faint); font-size: 13px; padding: 24px 0; }
+  .lane-body.stale { opacity: 0.28; filter: saturate(0.25); }
 
   /* --- alerts ------------------------------------------------------- */
-  .alerts { border-top: 1px solid var(--rule); padding: 16px 28px 24px; flex: 1; }
-  .alerts h2 { font-size: 14px; font-weight: 600; color: var(--ink-dim); margin: 0 0 12px; }
-  .alert-row {
-    display: flex; align-items: baseline; gap: 18px;
-    padding: 10px 0; border-bottom: 1px solid var(--rule); font-size: 15px;
+  .alerts {
+    border-top: 1px solid var(--rule); padding: 14px 26px 22px;
+    flex: 1; background: var(--panel);
   }
-  .alert-time { color: var(--ink-dim); font-size: 13px; width: 72px; flex: none; }
-  .alert-sev  { width: 74px; flex: none; font-weight: 600; font-size: 13px; }
+  .alerts h2 {
+    font-size: 12px; font-weight: 600; color: var(--ink-faint);
+    margin: 0 0 10px; letter-spacing: 0.04em;
+  }
+  .alert-row {
+    display: flex; align-items: baseline; gap: 16px;
+    padding: 9px 0; border-bottom: 1px solid var(--rule); font-size: 14px;
+  }
+  .alert-time { color: var(--ink-faint); font-size: 12px; width: 66px; flex: none; }
+  .alert-sev { width: 66px; flex: none; font-weight: 600; font-size: 12px; }
   .alert-sev.critical, .alert-sev.high { color: var(--alarm); }
   .alert-sev.medium { color: var(--attention); }
   .alert-sev.low, .alert-sev.info { color: var(--ink-dim); }
-  .alert-what { font-weight: 500; width: 200px; flex: none; }
-  .alert-detail { color: var(--ink-dim); font-size: 14px; }
+  .alert-what { font-weight: 500; width: 190px; flex: none; }
+  .alert-detail { color: var(--ink-dim); font-size: 13px; }
 
-  @keyframes arrive { from { opacity: 0; transform: translateY(-6px); } }
-  .alert-row.new { animation: arrive 280ms ease-out; }
+  @keyframes arrive {
+    from { opacity: 0; background: rgba(255,59,48,.12); }
+  }
+  .alert-row.new { animation: arrive 500ms ease-out; }
   @media (prefers-reduced-motion: reduce) { .alert-row.new { animation: none; } }
 </style>
 </head>
 <body>
   <header>
     <span class="wordmark">GridHawk</span>
-    <span class="headline quiet" id="headline">Starting</span>
+    <span class="annunciator quiet" id="annunciator">
+      <span class="lamp"></span><span id="headline">Starting</span>
+    </span>
     <div class="census" id="census"></div>
   </header>
   <div class="lanes" id="lanes"></div>
   <div class="alerts">
-    <h2 id="alerts-heading">Alerts</h2>
+    <h2>Alerts</h2>
     <div id="alert-list"></div>
   </div>
 
 <script>
 const POLL_MS = __POLL_MS__;
+const TRAIL_LENGTH = 18;          // sweeps of persistence kept behind the trace
 let seenAlerts = new Set();
+let trail = [];                   // recent carrier snapshots, newest last
 
 function esc(s) {
   return String(s == null ? "" : s).replace(/[&<>"]/g, c =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
 
-function conditionWord(condition) {
+function conditionWord(c) {
   return { quiet: "Clear", alarm: "Unaccounted emitter",
-           offline: "Not reporting", attention: "Degraded" }[condition] || condition;
+           offline: "Not reporting", attention: "Degraded" }[c] || c;
 }
 
-/* Draw carriers on a frequency axis.
+/* Signal strength maps onto a cold-to-hot ramp, the convention SDR waterfall
+   displays already use. Anything unaccounted leaves the ramp entirely. */
+function traceColour(overFloorDb, known) {
+  if (!known) return "#ff3b30";
+  const t = Math.max(0, Math.min(1, (overFloorDb || 0) / 45));
+  const stops = [[46,107,168], [79,195,232], [168,240,255]];
+  const i = t < 0.5 ? 0 : 1;
+  const f = t < 0.5 ? t * 2 : (t - 0.5) * 2;
+  const c = stops[i].map((v, k) => Math.round(v + (stops[i+1][k] - v) * f));
+  return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
 
-   The axis is zoomed to the carriers rather than spanning the whole monitored
-   band. Two transmitters separated by crystal tolerance sit ~1 kHz apart in a
-   150 kHz sweep -- under 1% of the width -- so a full-span axis renders them
-   as a single mark and hides the one thing worth seeing. */
 function spectrumWindow(carriers, low, high) {
   if (!carriers.length) return [low, high];
-
   const freqs = carriers.map(c => c.freq_hz);
   const lo = Math.min(...freqs), hi = Math.max(...freqs);
   const centre = (lo + hi) / 2;
-  const spread = hi - lo;
-
-  // Show at least 6 kHz, and at least four times the separation, so a pair is
-  // clearly two marks with room around them.
-  const width = Math.max(6000, spread * 4);
+  const width = Math.max(6000, (hi - lo) * 4);
   return [centre - width / 2, centre + width / 2];
 }
 
+/* The instrument face: a calibrated graticule, recent sweeps fading behind the
+   current one, and the live trace on top. Persistence is not decoration -- it
+   is how thermal drift becomes visible. A carrier that is warming up leaves a
+   trail; a stable one draws a single clean line. */
 function spectrum(detail) {
   const carriers = detail.carriers || [];
-  const [low, high] = spectrumWindow(
-    carriers, detail.low_hz || 0, detail.high_hz || 1);
-  const width = 1000, height = 150, base = height - 12, top = 14;
+  const [low, high] = spectrumWindow(carriers, detail.low_hz || 0, detail.high_hz || 1);
+  const W = 1000, H = 178, L = 34, R = 8, T = 10, B = 22;
+  const plotW = W - L - R, plotH = H - T - B, base = T + plotH;
 
-  let svg = `<svg class="spectrum" viewBox="0 0 ${width} ${height}"
-                  preserveAspectRatio="xMidYMid meet" role="img"
-                  aria-label="${carriers.length} carriers detected">`;
-  svg += `<line class="axis-line" x1="0" y1="${base}" x2="${width}" y2="${base}"/>`;
+  let svg = `<svg class="spectrum" viewBox="0 0 ${W} ${H}"
+                  preserveAspectRatio="none" role="img"
+                  aria-label="${carriers.length} carriers on a calibrated spectrum">`;
 
-  for (const c of carriers) {
-    const x = ((c.freq_hz - low) / (high - low)) * width;
-    if (x < 0 || x > width) continue;
-    const over = Math.max(0, Math.min(1, (c.over_floor_db || 0) / 45));
-    const y = base - Math.max(10, over * (base - top));
-    const cls = c.known ? "spike-known" : "spike-unknown";
-    svg += `<line class="${cls}" x1="${x.toFixed(1)}" y1="${base}"
-                  x2="${x.toFixed(1)}" y2="${y.toFixed(1)}"/>`;
-    svg += `<circle class="${c.known ? "cap-known" : "cap-unknown"}"
-                    cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="5"/>`;
+  // graticule: 10 vertical divisions, 5 horizontal, labelled in dB over floor
+  for (let i = 0; i <= 10; i++) {
+    const x = L + (plotW / 10) * i;
+    svg += `<line class="${i % 5 === 0 ? "grat-major" : "grat"}"
+                  x1="${x}" y1="${T}" x2="${x}" y2="${base}"/>`;
   }
+  for (let i = 0; i <= 5; i++) {
+    const y = T + (plotH / 5) * i;
+    const db = 45 - i * 9;
+    svg += `<line class="${i === 5 ? "grat-major" : "grat"}"
+                  x1="${L}" y1="${y}" x2="${W - R}" y2="${y}"/>`;
+    svg += `<text class="grat-label" x="${L - 6}" y="${y + 3}"
+                  text-anchor="end">${db}</text>`;
+  }
+  svg += `<text class="grat-label" x="4" y="${T + 4}">dB</text>`;
+
+  const plot = (list, opacity, widthPx) => {
+    let out = "";
+    for (const c of list) {
+      const x = L + ((c.freq_hz - low) / (high - low)) * plotW;
+      if (x < L || x > W - R) continue;
+      const over = Math.max(0, Math.min(1, (c.over_floor_db || 0) / 45));
+      const y = base - Math.max(6, over * plotH);
+      const colour = traceColour(c.over_floor_db, c.known);
+      out += `<line x1="${x.toFixed(1)}" y1="${base}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}"
+                    stroke="${colour}" stroke-width="${widthPx}" opacity="${opacity}"/>`;
+      if (opacity === 1) {
+        out += `<circle class="trace-cap" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}"
+                        r="4.5" fill="${colour}"/>`;
+      }
+    }
+    return out;
+  };
+
+  // older sweeps first, so the live trace draws over them
+  trail.forEach((snapshot, index) => {
+    const age = (index + 1) / (trail.length + 1);
+    svg += plot(snapshot, (age * 0.30).toFixed(3), 1.5);
+  });
+  svg += plot(carriers, 1, 3.5);
   svg += `</svg>`;
 
-  /* Axis labels live in HTML, not SVG. Stretching the SVG to fill the panel
-     would stretch its text with it, which reads as a strange typeface. */
   const mhz = hz => (hz / 1e6).toFixed(4);
-  const span = ((high - low) / 1000).toFixed(1);
   svg += `<div class="axis">
             <span>${mhz(low)} MHz</span>
-            <span class="axis-span">${span} kHz shown</span>
+            <span class="axis-span">${((high - low) / 1000).toFixed(1)} kHz span</span>
             <span>${mhz(high)} MHz</span>
           </div>`;
-  return svg;
+  return `<div class="scope">${svg}</div>`;
 }
 
 function rfLane(lane) {
@@ -322,11 +408,11 @@ function rfLane(lane) {
   let html = spectrum(d);
   html += `<div class="readout">`;
   for (const c of carriers) {
-    const unknown = c.known ? "" : " unknown";
+    const u = c.known ? "" : " unknown";
     html += `<div class="carrier">
-      <span class="freq${unknown}">${(c.freq_hz / 1e6).toFixed(6)}</span>
+      <span class="freq${u}">${(c.freq_hz / 1e6).toFixed(6)}</span>
       <span class="ppm">${c.ppm >= 0 ? "+" : ""}${Number(c.ppm).toFixed(2)} ppm</span>
-      <span class="tag${unknown}">${c.known ? "baselined" : "unaccounted"}</span>
+      <span class="tag${u}">${c.known ? "baselined" : "unaccounted"}</span>
     </div>`;
   }
   if (!carriers.length) html += `<div class="empty">Band clear. No carriers above the floor.</div>`;
@@ -346,32 +432,42 @@ function networkLane(lane) {
   if (!sessions.length && lane.condition === "offline") {
     return `<div class="empty">No capture windows received. Start the network monitor with --alert-url.</div>`;
   }
-  if (!sessions.length) {
-    return `<div class="empty">No outbound sessions in this window.</div>`;
-  }
+  if (!sessions.length) return `<div class="empty">No outbound sessions in this window.</div>`;
+
+  const shown = sessions.slice(0, 9);
+  const largest = Math.max(...shown.map(s => s.bytes), 1);
 
   let html = `<table class="sessions">`;
-  for (const s of sessions.slice(0, 8)) {
+  for (const s of shown) {
+    const width = Math.max(1, (s.bytes / largest) * 100);
     html += `<tr class="${s.allowed ? "" : "flagged"}">
       <td>${esc(s.dst)}</td>
       <td class="net">${esc(s.asn_name)} ${esc(s.cc)}</td>
       <td class="bytes">${Number(s.bytes).toLocaleString()} B</td>
+    </tr>
+    <tr class="${s.allowed ? "" : "flagged"}">
+      <td class="vol" colspan="3">
+        <div class="vol-track"><div class="vol-fill" style="width:${width.toFixed(1)}%"></div></div>
+      </td>
     </tr>`;
   }
   html += `</table>`;
-
   const flagged = sessions.filter(s => !s.allowed).length;
-  const note = flagged
-    ? `${flagged} to an unrecognised network`
-    : `all ${sessions.length} to authorised networks`;
-  html += `<div class="summary">${esc(d.windows || 0)} windows, ${esc(note)}</div>`;
+  html += `<div class="summary">${esc(d.windows || 0)} windows, ${
+    flagged ? `${flagged} to an unrecognised network`
+            : `all ${sessions.length} to authorised networks`}</div>`;
   return html;
 }
 
 function render(state) {
-  const headline = document.getElementById("headline");
-  headline.textContent = state.headline;
-  headline.className = "headline " + state.condition;
+  const rf = state.lanes.find(l => l.source === "rf");
+  if (rf && rf.condition !== "offline") {
+    trail.push((rf.detail.carriers || []).map(c => ({ ...c })));
+    while (trail.length > TRAIL_LENGTH) trail.shift();
+  }
+
+  document.getElementById("headline").textContent = state.headline;
+  document.getElementById("annunciator").className = "annunciator " + state.condition;
 
   const reporting = state.lanes.filter(l => l.condition !== "offline").length;
   document.getElementById("census").innerHTML =
@@ -382,7 +478,9 @@ function render(state) {
       <div class="lane-head">
         <span class="lane-title">${esc(lane.title)}</span>
         <span class="lane-sub">${esc(lane.subtitle)}</span>
-        <span class="lane-condition ${lane.condition}">${conditionWord(lane.condition)}</span>
+        <span class="lane-condition ${lane.condition}">
+          <span class="lamp"></span>${conditionWord(lane.condition)}
+        </span>
       </div>
       <div class="lane-body${lane.condition === "offline" ? " stale" : ""}">
         ${lane.source === "rf" ? rfLane(lane) : networkLane(lane)}
@@ -391,12 +489,11 @@ function render(state) {
 
   const list = document.getElementById("alert-list");
   if (!state.alerts.length) {
-    list.innerHTML = `<div class="empty">Nothing raised yet. Both layers are being watched.</div>`;
+    list.innerHTML = `<div class="empty">Nothing raised. Both layers are being watched.</div>`;
   } else {
     list.innerHTML = state.alerts.map(a => {
-      const key = a.id;
-      const isNew = !seenAlerts.has(key);
-      seenAlerts.add(key);
+      const isNew = !seenAlerts.has(a.id);
+      seenAlerts.add(a.id);
       return `<div class="alert-row${isNew ? " new" : ""}">
         <span class="alert-time">${esc(a.received_at)}</span>
         <span class="alert-sev ${esc(a.severity)}">${esc(a.severity)}</span>
@@ -411,7 +508,7 @@ async function poll() {
   try {
     const r = await fetch("/state.json", { cache: "no-store" });
     render(await r.json());
-  } catch (e) { /* keep the last good frame rather than blanking the screen */ }
+  } catch (e) { /* hold the last good frame rather than blanking the screen */ }
 }
 poll();
 setInterval(poll, POLL_MS);
