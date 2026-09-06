@@ -236,21 +236,17 @@ nasty silent failure.
 - `No supported devices found` → unplug and replug; confirm step 6 ran.
 - `usb_claim_interface error -6` → the TV driver still has it; recheck step 6.
 
-Now look at real radio noise:
+Now check the receive chain against real air:
 
 ```bash
-rtl_power -f 433.85M:434.00M:250 -i 1 -e 10 /tmp/air.csv
-python3 -c "
-from collectors.rf import parse_rtl_power, find_carriers
-sweeps = parse_rtl_power('/tmp/air.csv')
-print(f'{len(sweeps)} sweeps captured')
-for i, s in enumerate(sweeps[:3]):
-    print(f'  sweep {i}: {len(s)} bins, {len(find_carriers(s))} carriers')
-"
+cd ~/GridHawk
+make air-check
 ```
 
-With no transmitter running you should see **0 carriers** — just noise. That is
-the correct answer, and it is your false-positive check on real air.
+This captures live sweeps, reports the noise floor and detection threshold, and
+tells you what the numbers mean. **With every transmitter off, 0 carriers is the
+correct answer** -- that is your false-positive check against real air, and the
+noise floor it prints tells you how strong a transmitter needs to be.
 
 Attach the dipole antenna from the kit; it improves sensitivity considerably.
 

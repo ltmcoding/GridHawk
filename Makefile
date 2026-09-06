@@ -12,6 +12,7 @@ help:
 	@echo "make replay      drive real TLS sessions at the cloud (needs 'make cloud')"
 	@echo "make dashboard   run the alert receiver + dashboard (see docs/DEMO.md)"
 	@echo "make fallback    regenerate the recorded demo data (hardware-free)"
+	@echo "make air-check   check the SDR against real air (needs hardware)"
 
 scenarios:
 	@for s in $(SEEDS); do $(PY) -m sim.scenario --seed $$s; done
@@ -49,3 +50,6 @@ dashboard:
 
 fallback:
 	@$(PY) demo/make_fallback_data.py
+
+air-check:
+	@$(PY) demo/rf_check.py
