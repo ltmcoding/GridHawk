@@ -23,6 +23,12 @@ from core.events import Finding
 DEFAULT_TIMEOUT_S = 5.0
 CONTENT_TYPE = "application/json"
 
+# Heartbeats go to a different path than alerts. A dashboard that only ever
+# hears about anomalies cannot tell "watching, nothing wrong" from "crashed" --
+# both look like an empty screen.
+STATUS_PATH = "/status"
+ALERT_PATH = "/alert"
+
 # Zero means "report every finding". Any positive value holds off on repeating
 # the same alert for that many seconds.
 NO_SUPPRESSION = 0.0
@@ -106,6 +112,37 @@ class AlertSink:
             return False        # console-only mode
 
         return self._post(finding)
+
+    def send_status(self, state: str, detail: dict) -> bool:
+        """Report that this monitor is alive, and what it currently sees.
+
+        Sent every sweep or window regardless of whether anything is wrong, so
+        the dashboard can show quiet vigilance rather than blankness.
+        """
+        if not self.url:
+            return False
+
+        payload = {
+            "source": self.source_name,
+            "state": state,
+            "detail": detail,
+            "ts": time.time(),
+        }
+        status_url = self.url.replace(ALERT_PATH, STATUS_PATH)
+
+        request = urllib.request.Request(
+            status_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": CONTENT_TYPE},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                return 200 <= response.status < 300
+        except (urllib.error.URLError, OSError, TimeoutError):
+            # Heartbeats are best-effort and frequent; a missed one is not
+            # worth a line of noise on the console every second.
+            return False
 
     def send_all(self, findings: list[Finding]) -> int:
         """Deliver several findings, returning how many were accepted."""

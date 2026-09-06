@@ -371,7 +371,8 @@ def estimate_ppm(carriers: list[Carrier], nominal_hz: float) -> list[float]:
 # Turning carriers into findings
 # --------------------------------------------------------------------------
 
-def _describe_carriers(carriers: list[Carrier], nominal_hz: float | None) -> list[dict]:
+def _describe_carriers(carriers: list[Carrier], nominal_hz: float | None,
+                       noise_floor_db: float | None = None) -> list[dict]:
     """Carrier list rendered for a Finding's detail field."""
     described = []
     for carrier in carriers:
@@ -379,12 +380,17 @@ def _describe_carriers(carriers: list[Carrier], nominal_hz: float | None) -> lis
             ppm = round(carrier.ppm_from(nominal_hz), 3)
         else:
             ppm = None
-        described.append({
+        entry = {
             "freq_hz": round(carrier.freq_hz, 1),
             "power_db": round(carrier.power_db, 2),
             "width_hz": round(carrier.width_hz, 1),
             "ppm": ppm,
-        })
+        }
+        if noise_floor_db is not None:
+            # How far this carrier stands above the noise is what the spectrum
+            # strip uses for spike height, so a marginal signal looks marginal.
+            entry["over_floor_db"] = round(carrier.power_db - noise_floor_db, 1)
+        described.append(entry)
     return described
 
 
@@ -414,10 +420,11 @@ def _distance_to_nearest_known(carrier: Carrier, known: list[KnownEmitter]) -> f
 
 
 def _sweep_detail(carriers: list[Carrier], expected_emitters: int,
-                  nominal_hz: float | None) -> dict:
+                  nominal_hz: float | None,
+                  noise_floor_db: float | None = None) -> dict:
     """The description of a sweep shared by every outcome."""
     detail = {
-        "carriers": _describe_carriers(carriers, nominal_hz),
+        "carriers": _describe_carriers(carriers, nominal_hz, noise_floor_db),
         "n_carriers": len(carriers),
         "expected": expected_emitters,
     }
@@ -519,7 +526,9 @@ def analyse_sweep(bins: list[tuple[float, float]],
     Supplying `known` selects identification; otherwise we fall back to counting.
     """
     carriers = find_carriers(bins, snr_db=snr_db)
-    detail = _sweep_detail(carriers, expected_emitters, nominal_hz)
+    noise_floor_db = _median([power for _frequency, power in bins])
+    detail = _sweep_detail(carriers, expected_emitters, nominal_hz, noise_floor_db)
+    detail["noise_floor_db"] = round(noise_floor_db, 1)
 
     if known:
         findings = _findings_by_identification(

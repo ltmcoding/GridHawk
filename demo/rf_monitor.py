@@ -139,6 +139,44 @@ def run_baseline(args) -> int:
     return 0
 
 
+def _heartbeat_detail(observation, known, sweep_number: int,
+                      low_hz: float, high_hz: float) -> dict:
+    """What the dashboard needs to draw this sweep.
+
+    Carriers are marked known or not so the spectrum strip can colour them, and
+    the band edges travel with the data so the frequency axis is correct even
+    if the monitor is retuned.
+    """
+    fields = observation.fields
+    carriers = []
+    for carrier in fields.get("carriers", []):
+        nearest = None
+        for emitter in known or []:
+            distance = abs(emitter.freq_hz - carrier["freq_hz"])
+            if nearest is None or distance < nearest:
+                nearest = distance
+        is_known = nearest is not None and nearest <= known[0].tol_hz
+
+        carriers.append({
+            "freq_hz": carrier["freq_hz"],
+            "ppm": carrier.get("ppm"),
+            "power_db": carrier.get("power_db"),
+            "over_floor_db": carrier.get("over_floor_db", 25),
+            "known": is_known,
+        })
+
+    detail = {
+        "low_hz": low_hz,
+        "high_hz": high_hz,
+        "carriers": carriers,
+        "sweeps": sweep_number,
+    }
+    separations = fields.get("separations_hz")
+    if separations:
+        detail["separation_hz"] = separations[0]
+    return detail
+
+
 def _print_sweep(sweep_number: int, observation, nominal_hz: float) -> None:
     """Show what this sweep saw, so the audience can follow along."""
     carriers = observation.fields["carriers"]
@@ -202,6 +240,12 @@ def run_monitor(args) -> int:
             )
 
             _print_sweep(sweep_number, observation, args.nominal)
+
+            low_hz, high_hz = _band_edges(args.nominal, args.span)
+            sink.send_status(
+                "alert" if findings else "ok",
+                _heartbeat_detail(observation, known, sweep_number, low_hz, high_hz),
+            )
 
             if inventory is not None and findings:
                 findings = rank(enrich(findings, inventory))

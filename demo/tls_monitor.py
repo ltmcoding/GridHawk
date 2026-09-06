@@ -238,6 +238,28 @@ def monitor(source: CaptureSource, asn_lookup, port: int,
                 observations, findings = analyse_window(
                     capture_path, asn_lookup, port, maintenance_windows, inventory)
                 print_window(window_number, observations, findings)
+
+                flagged = set()
+                for finding in findings:
+                    destination = finding.detail.get("dst")
+                    if destination:
+                        flagged.add(destination)
+
+                sessions = []
+                for observation in observations:
+                    fields = observation.fields
+                    sessions.append({
+                        "dst": fields["dst"],
+                        "asn_name": fields["asn_name"],
+                        "cc": fields["cc"],
+                        "bytes": fields["bytes"],
+                        "allowed": fields["dst"] not in flagged,
+                    })
+
+                sink.send_status(
+                    "alert" if findings else "ok",
+                    {"sessions": sessions, "windows": window_number},
+                )
                 sink.send_all(findings)
             finally:
                 source.release(capture_path)
