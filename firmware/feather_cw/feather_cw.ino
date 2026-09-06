@@ -42,6 +42,7 @@ const int PIN_STATUS_LED      = 13;
 // ---- RFM69 registers we touch -------------------------------------------
 const uint8_t REG_OPERATING_MODE = 0x01;
 const uint8_t REG_DATA_MODULATION = 0x02;
+const uint8_t REG_FREQUENCY_DEVIATION_MSB = 0x05;   // 0x05..0x06, 16-bit
 const uint8_t REG_FREQUENCY_MSB  = 0x07;   // 0x07..0x09 hold a 24-bit value
 const uint8_t REG_PA_LEVEL       = 0x11;
 const uint8_t REG_VERSION        = 0x10;
@@ -56,6 +57,17 @@ const uint8_t DATA_MODE_CONTINUOUS_NO_SYNC = 0x60;
 
 // The RFM69HCW has no PA0 pin connected, so PA1 must be enabled (bit 6).
 const uint8_t PA_LEVEL_PA1_ENABLED = 0x40;
+
+// Frequency deviation of zero. In FSK the radio shifts between two frequencies
+// according to its data input; with a deviation of zero those two frequencies
+// are the same one, so the output collapses to a single unmodulated tone.
+//
+// This matters more than it sounds. Left at the chip default, and with nothing
+// driving the data input, the radio hops randomly between two frequencies and
+// smears its energy across the band. A spectrum sweep then shows a raised noise
+// floor and NO peak -- which looks exactly like a transmitter that is not
+// working, when in fact it is transmitting the wrong shape of signal.
+const uint8_t ZERO_DEVIATION = 0x00;
 
 // The radio derives its frequency from a 32 MHz crystal divided by 2^19.
 // Every frequency we ask for is rounded to a multiple of this step.
@@ -115,6 +127,13 @@ void applyFrequency() {
 }
 
 
+void applyZeroDeviation() {
+  // Collapse the two FSK tones into one, giving a true carrier.
+  writeRadioRegister(REG_FREQUENCY_DEVIATION_MSB + 0, ZERO_DEVIATION);
+  writeRadioRegister(REG_FREQUENCY_DEVIATION_MSB + 1, ZERO_DEVIATION);
+}
+
+
 void applyPower() {
   uint8_t level = powerLevel;
   if (level > 31) {
@@ -126,6 +145,7 @@ void applyPower() {
 
 void startTransmitting() {
   applyFrequency();
+  applyZeroDeviation();
   applyPower();
   writeRadioRegister(REG_DATA_MODULATION, DATA_MODE_CONTINUOUS_NO_SYNC);
   writeRadioRegister(REG_OPERATING_MODE, MODE_TRANSMIT);
@@ -147,6 +167,9 @@ void printSettings() {
   Serial.print(F("offset    : ")); Serial.print(frequencyOffsetPpm, 3); Serial.println(F(" ppm"));
   Serial.print(F("commanded : ")); Serial.print(effectiveFrequencyHz() / 1e6, 6); Serial.println(F(" MHz"));
   Serial.print(F("power     : ")); Serial.println(powerLevel);
+  Serial.print(F("deviation : ")); Serial.print(readRadioRegister(REG_FREQUENCY_DEVIATION_MSB));
+  Serial.print(F(" ")); Serial.print(readRadioRegister(REG_FREQUENCY_DEVIATION_MSB + 1));
+  Serial.println(F("  (both must be 0 for a clean carrier)"));
   Serial.print(F("state     : "));
   if (transmitting) {
     Serial.println(F("TRANSMITTING"));
@@ -192,6 +215,7 @@ void setup() {
 
   writeRadioRegister(REG_OPERATING_MODE, MODE_STANDBY);
   applyFrequency();
+  applyZeroDeviation();
   applyPower();
 
   Serial.println(F("ready -- 't' to transmit, '?' for settings"));
