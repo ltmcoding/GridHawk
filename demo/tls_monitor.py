@@ -39,6 +39,14 @@ DEFAULT_PORT = 443
 # same alert every window. Report it once, then hold off for this long.
 ALERT_REPEAT_SUPPRESSION_S = 60.0
 
+# The dashboard shows the sessions from the most recent window. A single
+# unauthorised call appears in exactly one window and then vanishes from view
+# about eight seconds later -- long before anyone has finished looking at it.
+# Recent sessions are kept so a flagged one stays on screen, and flagged ones
+# are kept longer than the rest.
+RECENT_SESSIONS_KEPT = 8
+FLAGGED_SESSION_KEPT_S = 90.0
+
 # Capture whole packets so the server name in the TLS handshake survives.
 FULL_PACKET_SNAPLEN = "0"
 
@@ -219,11 +227,46 @@ def print_window(window_number: int, observations, findings) -> None:
               f"{fields['cc']:<3} {fields['bytes']:>8} bytes  {fields['asn_name']}")
 
 
+def _recent_sessions(history: list[dict], observations, flagged: set) -> list[dict]:
+    """Sessions to show on the dashboard: this window, plus flagged history.
+
+    A flagged session is the whole point of the display, so it outlives the
+    window it appeared in. Ordinary sessions are replaced each window.
+    """
+    now = time.time()
+
+    for observation in observations:
+        fields = observation.fields
+        history.append({
+            "dst": fields["dst"],
+            "asn_name": fields["asn_name"],
+            "cc": fields["cc"],
+            "bytes": fields["bytes"],
+            "allowed": fields["dst"] not in flagged,
+            "seen_at": now,
+        })
+
+    kept_flagged = []
+    kept_allowed = []
+    for entry in history:
+        if entry["allowed"]:
+            kept_allowed.append(entry)
+        elif now - entry["seen_at"] <= FLAGGED_SESSION_KEPT_S:
+            kept_flagged.append(entry)
+
+    kept_allowed = kept_allowed[-RECENT_SESSIONS_KEPT:]
+    history[:] = kept_flagged + kept_allowed
+
+    # Flagged first: it is the thing worth seeing.
+    return kept_flagged + kept_allowed
+
+
 def monitor(source: CaptureSource, asn_lookup, port: int,
             maintenance_windows, inventory: Inventory | None,
             sink: AlertSink, max_windows: int | None = None) -> int:
     """Capture, analyse and alert until interrupted, or for a set number of windows."""
     window_number = 0
+    session_history: list[dict] = []
 
     try:
         while True:
@@ -247,19 +290,11 @@ def monitor(source: CaptureSource, asn_lookup, port: int,
                     if destination:
                         flagged.add(destination)
 
-                sessions = []
-                for observation in observations:
-                    fields = observation.fields
-                    sessions.append({
-                        "dst": fields["dst"],
-                        "asn_name": fields["asn_name"],
-                        "cc": fields["cc"],
-                        "bytes": fields["bytes"],
-                        "allowed": fields["dst"] not in flagged,
-                    })
+                sessions = _recent_sessions(session_history, observations, flagged)
+                any_flagged = any(not s["allowed"] for s in sessions)
 
                 sink.send_status(
-                    "alert" if findings else "ok",
+                    "alert" if any_flagged else "ok",
                     {"sessions": sessions, "windows": window_number},
                 )
                 sink.send_all(findings)

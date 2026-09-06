@@ -198,6 +198,33 @@ def cleanup() -> None:
 # Preflight
 # --------------------------------------------------------------------------
 
+def resolve_cloud_address(args) -> str:
+    """Find the Mac's authorised address, avoiding the rogue alias.
+
+    The rogue endpoint is an alias on the same interface as the real one, so
+    Bonjour advertises BOTH under the Mac's .local name -- and the rogue can
+    come back first. Anything that resolves the hostname itself may therefore
+    aim the "normal" inverter traffic straight at the unauthorised address and
+    hammer it forever, which looks like the demo generating endless attacks.
+
+    So we resolve once here, discard loopback and the rogue, and hand the
+    resulting address to every component rather than letting each re-resolve.
+    """
+    import socket
+    candidates = []
+    for family, _type, _proto, _canon, sockaddr in socket.getaddrinfo(
+            args.mac, None, socket.AF_INET):
+        address = sockaddr[0]
+        if address.startswith("127.") or address == args.rogue:
+            continue
+        if address not in candidates:
+            candidates.append(address)
+
+    if not candidates:
+        raise OSError(f"{args.mac} resolves only to loopback or the rogue address")
+    return candidates[0]
+
+
 def write_address_map(args) -> str:
     """Regenerate the address map from the addresses actually in use.
 
@@ -206,11 +233,10 @@ def write_address_map(args) -> str:
     detector flags all of them and normal traffic looks like an attack. The
     runner already knows both endpoints, so it writes the map itself.
     """
-    import socket
     if args.replay:
         cloud_ip, rogue_ip = REPLAY_CLOUD_IP, REPLAY_ROGUE_IP
     else:
-        cloud_ip, rogue_ip = socket.gethostbyname(args.mac), args.rogue
+        cloud_ip, rogue_ip = resolve_cloud_address(args), args.rogue
 
     path = os.path.join(REPO, args.asn_map)
     with open(path, "w") as handle:
@@ -242,9 +268,10 @@ def preflight(args) -> bool:
               f"make demo-rehearse{RESET}")
 
     try:
-        cloud_ip = write_address_map(args)
-        ok &= verdict(True, f"address map matches the cloud at {cloud_ip}")
+        args.cloud_ip = write_address_map(args)
+        ok &= verdict(True, f"address map matches the cloud at {args.cloud_ip}")
     except OSError as error:
+        args.cloud_ip = None
         ok &= verdict(False, f"could not resolve {args.mac}: {error}")
 
     # Replay needs no cloud, no rogue endpoint, no radio and no capture -- it
@@ -258,13 +285,14 @@ def preflight(args) -> bool:
         return bool(ok)
 
     cloud_open = False
+    cloud_target = args.cloud_ip or args.mac
     try:
         import socket
-        with socket.create_connection((args.mac, CLOUD_PORT), timeout=5):
+        with socket.create_connection((cloud_target, CLOUD_PORT), timeout=5):
             cloud_open = True
     except OSError:
         pass
-    ok &= verdict(cloud_open, f"vendor cloud reachable at {args.mac}:{CLOUD_PORT}")
+    ok &= verdict(cloud_open, f"vendor cloud reachable at {cloud_target}:{CLOUD_PORT}")
     if not cloud_open:
         print(f"{DIM}    On your Mac: python3 -m sim.cloud.server "
               f"--bind 0.0.0.0 --port {CLOUD_PORT}{RESET}")
@@ -461,8 +489,11 @@ def act_two_network(args) -> None:
         base = ["sudo"] + base
 
     if not args.replay:
+        cloud_host = args.cloud_ip or args.mac
+        print(f"{DIM}  inverter traffic aimed at {cloud_host} "
+              f"(the resolved address, not the name){RESET}")
         start_background([sys.executable, "demo/inverter_traffic.py",
-                          "--host", args.mac, "--port", str(CLOUD_PORT),
+                          "--host", cloud_host, "--port", str(CLOUD_PORT),
                           "--interval", "2"], "inverter traffic")
         time.sleep(3)
 
@@ -526,6 +557,7 @@ def main() -> int:
                              "rehearsal needs nothing else running")
     args = parser.parse_args()
 
+    args.cloud_ip = None
     args.replay_one = "demo/fallback/rf_baseline.csv"
     args.replay_two = "demo/fallback/rf_two_radios.csv"
     args.replay_rogue = "demo/fallback/rf_rogue_only.csv"
