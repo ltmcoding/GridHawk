@@ -46,6 +46,20 @@ SIMULATED_DEVICE_IP = "172.28.0.5"
 # timing, so this is a placeholder rather than a measurement.
 REPLAY_SESSION_DURATION_S = 0.2
 
+# After a connection closes, TCP still exchanges teardown packets: a FIN from
+# each side and a final ACK. Those arrive after we have already emitted the
+# session, and without this grace period each one starts a BRAND NEW flow under
+# the same key -- turning one connection into three "sessions".
+#
+# Measured on real capture: every session appeared three times (2948, 187 and
+# 40 bytes), which split the byte totals AND created a phantom channel of
+# 40-byte sessions arriving milliseconds apart. The cadence rule then fired on
+# that phantom channel with a "period" of 0.1 seconds.
+#
+# Two seconds comfortably covers teardown while staying far below any realistic
+# reuse of the same ephemeral port.
+CLOSED_FLOW_GRACE_S = 2.0
+
 
 def _build_observation(start_time, source_ip, destination_ip, destination_port,
                        total_bytes, duration, server_name, asn_lookup) -> Observation:
@@ -83,6 +97,7 @@ def from_pcap(path: str, asn_lookup, port: int = HTTPS_PORT) -> list[Observation
     same group, so `bytes` counts the whole conversation.
     """
     open_sessions: dict[tuple, dict] = {}
+    recently_closed: dict[tuple, float] = {}
     observations: list[Observation] = []
 
     def close_session(session):
@@ -110,6 +125,13 @@ def from_pcap(path: str, asn_lookup, port: int = HTTPS_PORT) -> list[Observation
         else:
             key = (packet.dst, packet.src, packet.dport, packet.sport)
 
+        # Ignore the tail of a connection we have already reported.
+        closed_at = recently_closed.get(key)
+        if closed_at is not None:
+            if packet.ts - closed_at <= CLOSED_FLOW_GRACE_S:
+                continue
+            del recently_closed[key]    # far enough apart to be a new connection
+
         session = open_sessions.get(key)
         if session is None:
             client_ip, server_ip, _client_port, server_port = key
@@ -135,6 +157,7 @@ def from_pcap(path: str, asn_lookup, port: int = HTTPS_PORT) -> list[Observation
         if packet.fin or packet.rst:
             close_session(session)
             del open_sessions[key]
+            recently_closed[key] = packet.ts
 
     # Captures routinely stop mid-conversation. Emit those sessions rather than
     # discarding them, or the last minute of every capture silently disappears.

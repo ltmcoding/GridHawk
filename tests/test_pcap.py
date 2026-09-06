@@ -230,6 +230,8 @@ def main():
         rejected = "pcapng" in str(error)
     check("pcapng rejected with an explanatory error", rejected)
 
+    test_flow_teardown()
+
     # --- SNI extraction --------------------------------------------------
     hello = build_client_hello("vendor-cloud.test")
     check("SNI extracted from ClientHello", pcap.parse_sni(hello) == "vendor-cloud.test")
@@ -244,6 +246,45 @@ def main():
     if failed:
         return 1
     return 0
+
+
+
+
+def test_flow_teardown():
+    """One TCP connection must be reported once, not once per teardown packet."""
+    import json
+    from collectors import tls_egress
+    from sim.asn_fixture import load_asn_map
+
+    print("\nflow assembly across TCP teardown")
+    os.makedirs("runs/t", exist_ok=True)
+
+    frames = []
+    for index in range(3):
+        stages = (
+            (pcap.TCP_FLAG_SYN, b""),
+            (0x18, b"x" * 2900),
+            (pcap.TCP_FLAG_FIN | 0x10, b""),      # our FIN
+            (pcap.TCP_FLAG_FIN | 0x10, b""),      # their FIN
+            (0x10, b""),                           # final ACK
+        )
+        for flags, payload in stages:
+            segment = build_tcp_segment(50000 + index, 8443, flags, payload)
+            packet = build_ipv4_packet("192.168.11.140", "192.168.8.199", segment)
+            frames.append(ethernet_frame(packet))
+
+    write_capture("runs/t/teardown.pcap", pcap.LINK_TYPE_ETHERNET, frames)
+
+    map_path = "runs/t/asn.json"
+    with open(map_path, "w") as handle:
+        json.dump({"192.168.8.199": [64500, "VENDOR-CLOUD-PRIMARY", "DE"]}, handle)
+
+    observations = tls_egress.from_pcap("runs/t/teardown.pcap",
+                                        load_asn_map(map_path), port=8443)
+
+    check("3 connections report as 3 sessions, not 9", len(observations) == 3)
+    check("bytes are not split across teardown fragments",
+          all(o.fields["bytes"] > 2900 for o in observations))
 
 
 if __name__ == "__main__":
