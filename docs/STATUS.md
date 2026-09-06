@@ -149,4 +149,8 @@ No third-party packages. Python 3.11+ standard library only.
   behaviour and is the right source to replace them with.
 - The simulator's TLS client is constrained-OpenSSL. Its JA3 is **not** an
   mbedTLS or wolfSSL fingerprint. No JA3-based detection is claimed.
-- All RF results are synthetic. No signal-level validation against hardware.
+- RF is validated on real hardware: two RFM69 boards commanded to the same
+  frequency measured 1,199 Hz (2.77 ppm) apart, zero false positives across
+  10 sweeps of live air, and correct detection across 112 continuous sweeps
+  including the authorised-silent case. See RESULTS.md.
+- The network layer remains synthetic. There is still no bench inverter.

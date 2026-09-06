@@ -1,7 +1,8 @@
 # Measured results
 
-Every number here is reproducible from this repo. **All results are synthetic** —
-no bench inverter, no real RF capture. See "Threats to validity" at the end.
+Every number here is reproducible from this repo. **The RF layer is now validated on real hardware** (see below). The network
+layer remains synthetic: there is still no bench inverter. See "Threats to
+validity" at the end.
 
 ## Method
 
@@ -72,7 +73,65 @@ Before and after the firing-rate guard (see [ENGINEERING-LOG.md](ENGINEERING-LOG
 
 Recall cost: 1.00 → 0.92 at 6 h and 1.00 → 0.87 at 72 h. Deliberate.
 
-## RF — carrier detection
+
+## Hardware validation — RF (measured, not synthetic)
+
+Raspberry Pi 5, RTL-SDR Blog V4, two Adafruit Feather M0 RadioFruit RFM69HCW
+boards flashed with identical firmware and commanded to the identical
+frequency (433.920000 MHz). Sweeps at 250 Hz bins across 150 kHz.
+
+### Crystal difference, measured three ways
+
+| measurement | frequency | offset |
+|---|---|---|
+| board A alone | 433.917479 MHz | **-5.81 ppm** |
+| board B alone | 433.918679 MHz | **-3.04 ppm** |
+| both together | 433.917477 and 433.918676 | -5.82 and -3.05 |
+
+**Separation: 1,199 Hz — 2.77 ppm of manufacturing difference alone.** The
+individual measurements agree with the simultaneous one, which is what allows
+each carrier to be attributed to a specific board.
+
+### False-positive rate on real air
+
+Ten sweeps of live 433 MHz spectrum with every transmitter switched off:
+**zero carriers detected.** Noise floor -49.3 dB, varying by about 1 dB.
+
+### End-to-end detection, 112 continuous sweeps
+
+| sweeps | state | outcome |
+|---|---|---|
+| 1-51 (separate run) | authorised only | **0 alerts** |
+| 1-24 | authorised + rogue | `CRITICAL`, rogue named |
+| **25-33** | **authorised OFF, rogue only** | **still alerts** |
+| 34-42 | both off | silent |
+| 43-57 | authorised only | silent |
+| 58-112 | authorised + rogue | alerts, suppressed to 5 total |
+
+Sweeps 25-33 are the case carrier counting cannot see: one carrier present,
+exactly the expected count, but not the baselined one.
+
+### Thermal drift
+
+Both boards drift about **0.15 ppm (~65 Hz) over the first minute** as they
+warm, then settle. Well inside the match tolerance, confirming that a baselined
+emitter stays recognised across a session.
+
+### What the hardware changed about the design
+
+**Real separations are far tighter than the synthetic tests assumed.** The
+simulator used 8-20 kHz; actual parts landed at 1.2 kHz. The 2,000 Hz default
+match tolerance would have classified the rogue as the authorised board and
+raised nothing -- silently. `--tolerance-hz` exists because of this
+measurement, and 400 Hz is the value these boards need.
+
+**A firmware bug produced a convincing wrong answer.** Frequency deviation was
+left at the chip default, so the radios transmitted FSK rather than a carrier.
+An early two-board reading showed 9,975 Hz of separation -- within 0.35% of
+twice the 5,005 Hz default deviation. It looked like a clean result and was an
+artifact. Zeroing deviation gave the true 1,199 Hz.
+
+## RF — carrier detection (synthetic)
 
 | test | result |
 |---|---|
@@ -120,8 +179,10 @@ the pair merges at any bin width. Bin width must then be ≤ ~1/4 of separation.
 1. **Profile constants are assumed, not measured.** Cadence and byte volumes are
    invented. Forescout SUN:DOWN documents real vendor cloud behaviour and should
    replace them.
-2. **No hardware anywhere.** No bench inverter, no real RF capture. Every RF
-   number is synthetic.
+2. **No bench inverter.** The network layer is entirely synthetic. The RF layer
+   is now measured on real hardware, but the transmitters are development
+   boards standing in for an inverter's own radio -- the measurement is real,
+   the subject is not.
 3. **Generator and detector share an author.** Mitigated by the sealed manifest,
    clean runs, and simulating properties the detector ignores — but not
    eliminated. An independently written generator would be stronger.
@@ -129,7 +190,9 @@ the pair merges at any bin width. Bin width must then be ≤ ~1/4 of separation.
    confidence interval.
 5. **The abstain guard is silent.** Recall lost to abstention is not currently
    logged.
-6. **Carrier model is idealised** — Gaussian envelope, no modulation sidebands,
-   phase noise, spurs, or harmonics.
+6. **The synthetic carrier model is idealised** — Gaussian envelope, no
+   modulation sidebands, phase noise, spurs, or harmonics. Real captures show
+   the model was optimistic about separation: actual parts sat 1.2 kHz apart,
+   not the 8-20 kHz modelled.
 7. **JA3 is not validated.** The simulated client is OpenSSL, not an embedded
    stack, so no fingerprint-based detection is claimed.

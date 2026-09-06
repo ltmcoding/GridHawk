@@ -69,6 +69,12 @@ site's firmware schedule is supplied (0.90 / 1.00 without it). RF: resolves
 emitters separated by more than ~1.3x the carrier's occupied bandwidth, and
 identifies unaccounted carriers against a baseline.
 
-**All results are synthetic.** No bench inverter, no real RF capture. Device
-profile constants are assumed, not measured. See
+**RF is validated on real hardware.** Two radios commanded to the same
+frequency measured 1,199 Hz (2.77 ppm) apart from crystal tolerance alone; zero
+false positives across 10 sweeps of live air; correct detection across 112
+continuous sweeps, including the case where the authorised radio is silent and
+only the rogue transmits.
+
+**The network layer is still synthetic.** There is no bench inverter, and
+device profile constants are assumed. See
 [threats to validity](docs/RESULTS.md#threats-to-validity).
