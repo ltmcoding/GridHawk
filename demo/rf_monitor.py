@@ -24,7 +24,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from collectors import rf_live
 from collectors.rf import (
-    analyse_sweep, carriers_from_sweeps, save_baseline, load_baseline,
+    DEFAULT_MATCH_TOLERANCE_HZ, analyse_sweep, carriers_from_sweeps,
+    save_baseline, load_baseline,
 )
 from correlate.inventory import Inventory, enrich, rank
 from sinks.webhook import AlertSink, frequency_identity
@@ -108,7 +109,8 @@ def run_baseline(args) -> int:
         sweeps.append(sweep)
         print(f"  sweep {len(sweeps)}/{args.sweeps}")
 
-    emitters = carriers_from_sweeps(sweeps, label="authorised-radio")
+    emitters = carriers_from_sweeps(sweeps, tol_hz=args.tolerance_hz,
+                                    label="authorised-radio")
     if not emitters:
         print("\nNo carrier found. Check that the radio is transmitting, that "
               "the antenna is attached, and that the band covers its frequency.")
@@ -124,6 +126,16 @@ def run_baseline(args) -> int:
         print("\nWARNING: more than one carrier was baselined. If the second "
               "board was already transmitting, it has now been recorded as "
               "authorised. Power it off and baseline again.")
+
+    # A tolerance wider than the gap between two transmitters silently swallows
+    # the second one: it matches the baseline and never raises an alert. That
+    # failure is invisible -- the detector simply stays quiet -- so it is worth
+    # saying out loud how far apart a second radio must be to be seen.
+    print(f"\nMatch tolerance: +/-{args.tolerance_hz:.0f} Hz")
+    print(f"  A second transmitter closer than {args.tolerance_hz:.0f} Hz to the "
+          f"baselined one will be treated as the SAME radio and NOT flagged.")
+    print(f"  Measure both alone first; if they are less than "
+          f"{2 * args.tolerance_hz:.0f} Hz apart, lower --tolerance-hz.")
     return 0
 
 
@@ -221,6 +233,10 @@ def main() -> int:
                         help="read sweeps from a recorded CSV instead of the radio")
     parser.add_argument("--inventory", default="demo/inventory.json",
                         help="Layer 1 join: weights alerts by capacity at risk")
+    parser.add_argument("--tolerance-hz", type=float, default=DEFAULT_MATCH_TOLERANCE_HZ,
+                        help="how far a carrier may sit from a baselined one and "
+                             "still count as the same radio; MUST be well under "
+                             "half the gap between your transmitters")
     args = parser.parse_args()
 
     try:
