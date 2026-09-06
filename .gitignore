@@ -5,6 +5,10 @@ found/
 truth/
 sim/cloud/certs/
 *.pcap
+# ...but the recorded demo captures are assets, not working files.
+# They were silently excluded by the rule above, so the fallback demo
+# failed on any machine that had not generated them locally.
+!demo/fallback/*.pcap
 demo/config.json
 demo/asn_map.json
 demo/baseline.json

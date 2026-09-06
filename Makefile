@@ -56,4 +56,4 @@ air-check:
 	@$(PY) demo/rf_check.py
 
 demo-rehearse:
-	@$(PY) demo/run_demo.py --mac 127.0.0.1 --replay --skip-preflight
+	@$(PY) demo/run_demo.py --mac 127.0.0.1 --replay --with-dashboard

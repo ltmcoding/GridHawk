@@ -85,12 +85,36 @@ def verdict(passed: bool, message: str) -> bool:
     return passed
 
 
+def check_step(exit_code: int, before: int, after: int,
+               expect_alerts: bool, description: str) -> bool:
+    """Judge one step on both whether it ran and whether it alerted.
+
+    Three distinct outcomes get three distinct messages, because "no alerts"
+    means something completely different depending on why.
+    """
+    if exit_code != 0:
+        return verdict(False, f"{description}: the command failed (exit {exit_code}) "
+                              f"-- see the output above")
+    if before < 0 or after < 0:
+        return verdict(False, f"{description}: could not reach the dashboard, so "
+                              f"delivery cannot be confirmed. Check --mac.")
+    raised = after - before
+    if expect_alerts:
+        return verdict(raised > 0, f"{description}: {raised} alert(s) delivered "
+                                   f"(expected at least 1)")
+    return verdict(raised == 0, f"{description}: {raised} alert(s) delivered "
+                                f"(expected 0)")
+
+
 # --------------------------------------------------------------------------
 # Talking to the dashboard
 # --------------------------------------------------------------------------
 
 def dashboard_url(mac_host: str) -> str:
     return f"http://{mac_host}:{DASHBOARD_PORT}"
+
+
+DASHBOARD_TIMEOUT_S = 3.0
 
 
 def alert_count(mac_host: str) -> int:
@@ -101,13 +125,14 @@ def alert_count(mac_host: str) -> int:
     just that a finding was raised locally.
     """
     try:
-        with urllib.request.urlopen(f"{dashboard_url(mac_host)}/alerts.json", timeout=5) as r:
+        with urllib.request.urlopen(f"{dashboard_url(mac_host)}/alerts.json",
+                                    timeout=DASHBOARD_TIMEOUT_S) as r:
             return len(json.load(r))
     except (urllib.error.URLError, OSError, ValueError):
         return -1
 
 
-def reachable(url: str, timeout: float = 5.0) -> bool:
+def reachable(url: str, timeout: float = DASHBOARD_TIMEOUT_S) -> bool:
     try:
         urllib.request.urlopen(url, timeout=timeout)
         return True
@@ -121,8 +146,13 @@ def reachable(url: str, timeout: float = 5.0) -> bool:
 # Running the pieces
 # --------------------------------------------------------------------------
 
-def run(command: list[str], label: str) -> str:
-    """Run a step in the foreground and show its output as it happens."""
+def run(command: list[str], label: str) -> tuple[str, int]:
+    """Run a step in the foreground, showing output as it happens.
+
+    Returns the output and the exit code. The exit code matters: a monitor that
+    crashed produced no alerts, and counting that as "0 alerts, as expected"
+    would report a passing step over a stack trace.
+    """
     print(f"{DIM}  $ {' '.join(command)}{RESET}")
     collected = []
     process = subprocess.Popen(command, cwd=REPO, stdout=subprocess.PIPE,
@@ -135,7 +165,7 @@ def run(command: list[str], label: str) -> str:
     except KeyboardInterrupt:
         process.terminate()
         raise
-    return "".join(collected)
+    return "".join(collected), process.returncode
 
 
 def start_background(command: list[str], label: str) -> subprocess.Popen:
@@ -162,14 +192,30 @@ def cleanup() -> None:
 # --------------------------------------------------------------------------
 
 def preflight(args) -> bool:
+    """Check every dependency before anything starts.
+
+    Failing here costs thirty seconds. Failing halfway through costs the demo.
+    """
     step(0, "Preflight")
     ok = True
 
-    ok &= verdict(reachable(dashboard_url(args.mac) + "/alerts.json"),
-                  f"dashboard reachable at {dashboard_url(args.mac)}")
-    if not ok:
-        print(f"{DIM}    On your Mac: python3 -m sinks.alert_receiver "
+    dashboard_ok = reachable(dashboard_url(args.mac) + "/alerts.json")
+    ok &= verdict(dashboard_ok, f"dashboard reachable at {dashboard_url(args.mac)}")
+    if not dashboard_ok:
+        print(f"{DIM}    Start it there: python3 -m sinks.alert_receiver "
               f"--bind 0.0.0.0 --port {DASHBOARD_PORT}{RESET}")
+        print(f"{DIM}    Or, to rehearse with everything on this machine: "
+              f"make demo-rehearse{RESET}")
+
+    # Replay needs no cloud, no rogue endpoint, no radio and no capture -- it
+    # reads recordings. Checking for them would fail a rehearsal that is fine.
+    if args.replay:
+        ok &= verdict(all(os.path.exists(os.path.join(REPO, p)) for p in
+                          (args.replay_one, args.replay_two, args.replay_rogue,
+                           "demo/fallback/tls_normal.pcap",
+                           "demo/fallback/tls_rogue.pcap")),
+                      "recorded demo data present (run 'make fallback' if missing)")
+        return bool(ok)
 
     cloud_open = False
     try:
@@ -228,8 +274,8 @@ def act_one_rf(args) -> None:
                         "--bin-hz", str(args.bin_hz)]
     if args.replay:
         baseline_command += ["--replay", args.replay_one]
-    output = run(baseline_command, "baseline")
-    verdict("Baselined 1 emitter" in output,
+    output, code = run(baseline_command, "baseline")
+    verdict(code == 0 and "Baselined 1 emitter" in output,
             "exactly one emitter baselined (two would mean radio B was still on)")
 
     step(2, "Watch with only the authorised radio")
@@ -240,19 +286,16 @@ def act_one_rf(args) -> None:
         common_quiet[common_quiet.index(args.replay_two)] = args.replay_one
     else:
         common_quiet = common
-    run(common_quiet + ["--max-sweeps", str(QUIET_SWEEPS)], "quiet watch")
-    raised = alert_count(args.mac) - before
-    verdict(raised == 0,
-            f"{QUIET_SWEEPS} sweeps of the authorised radio raised {raised} alerts "
-            f"(expected 0)")
+    _, code = run(common_quiet + ["--max-sweeps", str(QUIET_SWEEPS)], "quiet watch")
+    check_step(code, before, alert_count(args.mac), False,
+               f"{QUIET_SWEEPS} sweeps of the authorised radio alone")
 
     step(3, "Switch on the second radio")
     instruct("Power ON radio B.  Leave radio A on.")
     say("Identical firmware, identical commanded frequency. Their crystals differ.")
     before = alert_count(args.mac)
-    run(common + ["--max-sweeps", str(ALARM_SWEEPS)], "both radios")
-    raised = alert_count(args.mac) - before
-    verdict(raised > 0, f"second radio raised {raised} alert(s) (expected at least 1)")
+    _, code = run(common + ["--max-sweeps", str(ALARM_SWEEPS)], "both radios")
+    check_step(code, before, alert_count(args.mac), True, "second radio")
 
     step(4, "Switch the authorised radio off")
     instruct("Power OFF radio A.  Leave radio B on.")
@@ -264,11 +307,9 @@ def act_one_rf(args) -> None:
         common_rogue[common_rogue.index(args.replay_two)] = args.replay_rogue
     else:
         common_rogue = common
-    run(common_rogue + ["--max-sweeps", str(ALARM_SWEEPS)], "rogue alone")
-    raised = alert_count(args.mac) - before
-    verdict(raised > 0,
-            f"rogue alone raised {raised} alert(s) (expected at least 1 -- this is "
-            f"the case carrier counting cannot see)")
+    _, code = run(common_rogue + ["--max-sweeps", str(ALARM_SWEEPS)], "rogue alone")
+    check_step(code, before, alert_count(args.mac), True,
+               "rogue alone (the case carrier counting cannot see)")
 
 
 def act_two_network(args) -> None:
@@ -294,9 +335,8 @@ def act_two_network(args) -> None:
         time.sleep(3)
 
     before = alert_count(args.mac)
-    run(monitor_command + ["--max-windows", str(QUIET_WINDOWS)], "quiet capture")
-    raised = alert_count(args.mac) - before
-    verdict(raised == 0, f"normal traffic raised {raised} alerts (expected 0)")
+    _, code = run(monitor_command + ["--max-windows", str(QUIET_WINDOWS)], "quiet capture")
+    check_step(code, before, alert_count(args.mac), False, "normal traffic")
 
     step(6, "The inverter calls somewhere it should not")
     instruct("Ready to make the unauthorised call.")
@@ -304,7 +344,7 @@ def act_two_network(args) -> None:
 
     if not args.replay:
         run([sys.executable, "demo/rogue_call.py",
-             "--host", args.rogue, "--port", str(CLOUD_PORT)], "rogue call")
+             "--host", args.rogue, "--port", str(CLOUD_PORT)], "rogue call")[0]
         rogue_monitor = monitor_command
     else:
         rogue_monitor = list(monitor_command)
@@ -312,9 +352,8 @@ def act_two_network(args) -> None:
             "demo/fallback/tls_rogue.pcap"
 
     before = alert_count(args.mac)
-    run(rogue_monitor + ["--max-windows", str(QUIET_WINDOWS)], "rogue capture")
-    raised = alert_count(args.mac) - before
-    verdict(raised > 0, f"the unauthorised call raised {raised} alert(s) (expected 1)")
+    _, code = run(rogue_monitor + ["--max-windows", str(QUIET_WINDOWS)], "rogue capture")
+    check_step(code, before, alert_count(args.mac), True, "the unauthorised call")
 
 
 def main() -> int:
@@ -337,11 +376,20 @@ def main() -> int:
     parser.add_argument("--replay", action="store_true",
                         help="rehearse with recorded data: no radios, no capture, no root")
     parser.add_argument("--skip-preflight", action="store_true")
+    parser.add_argument("--with-dashboard", action="store_true",
+                        help="start a dashboard on this machine first, so a "
+                             "rehearsal needs nothing else running")
     args = parser.parse_args()
 
     args.replay_one = "demo/fallback/rf_baseline.csv"
     args.replay_two = "demo/fallback/rf_two_radios.csv"
     args.replay_rogue = "demo/fallback/rf_rogue_only.csv"
+
+    if args.with_dashboard:
+        start_background([sys.executable, "-m", "sinks.alert_receiver",
+                          "--bind", "0.0.0.0", "--port", str(DASHBOARD_PORT)],
+                         "dashboard")
+        time.sleep(2)
 
     print()
     print(f"{BOLD}GridHawk demo{RESET}")
