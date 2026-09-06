@@ -41,6 +41,10 @@ QUIET_DWELL_S = 20.0
 ALARM_DWELL_S = 16.0
 CAPTURE_WINDOW_S = 8.0
 
+# Last octet used for the rogue alias when one is not given explicitly.
+ROGUE_LAST_OCTET = 250
+ROGUE_FALLBACK_OCTET = 251
+
 # Addresses baked into the recorded captures by demo/make_fallback_data.py.
 # A rehearsal has to resolve those, not whatever this machine is called today.
 REPLAY_CLOUD_IP = "192.168.1.50"
@@ -240,30 +244,58 @@ def cleanup() -> None:
 # Preflight
 # --------------------------------------------------------------------------
 
+def derive_rogue_address(cloud_ip: str) -> str:
+    """Pick an unauthorised address on the same subnet as the cloud.
+
+    Hard-coding this breaks the moment you move networks: an alias left on
+    192.168.8.250 is unreachable from a 192.168.1.x host, and preflight fails
+    for a reason that has nothing to do with the demo. Deriving it from the
+    address actually in use means the demo travels.
+    """
+    head, _, last = cloud_ip.rpartition(".")
+    octet = ROGUE_LAST_OCTET
+    if last == str(ROGUE_LAST_OCTET):
+        octet = ROGUE_FALLBACK_OCTET
+    return f"{head}.{octet}"
+
+
 def resolve_cloud_address(args) -> str:
-    """Find the Mac's authorised address, avoiding the rogue alias.
+    """Find the Mac's authorised address by asking which one actually answers.
 
-    The rogue endpoint is an alias on the same interface as the real one, so
-    Bonjour advertises BOTH under the Mac's .local name -- and the rogue can
-    come back first. Anything that resolves the hostname itself may therefore
-    aim the "normal" inverter traffic straight at the unauthorised address and
-    hammer it forever, which looks like the demo generating endless attacks.
+    Resolving the .local name is not enough. Bonjour advertises every address
+    on the interface -- loopback, the real one, and any alias, including one
+    left behind from a network you were on hours ago. Picking the first is a
+    coin flip, and picking a stale alias produces a confident, wrong answer.
 
-    So we resolve once here, discard loopback and the rogue, and hand the
-    resulting address to every component rather than letting each re-resolve.
+    So each candidate is tried on the cloud port and the first that connects
+    wins. That is the only definition that matters: the authorised cloud is the
+    address this machine can actually reach it on.
     """
     import socket
+
     candidates = []
-    for family, _type, _proto, _canon, sockaddr in socket.getaddrinfo(
+    for _family, _type, _proto, _canon, sockaddr in socket.getaddrinfo(
             args.mac, None, socket.AF_INET):
         address = sockaddr[0]
-        if address.startswith("127.") or address == args.rogue:
+        if address.startswith("127."):
+            continue
+        if address == getattr(args, "rogue", None):
             continue
         if address not in candidates:
             candidates.append(address)
 
     if not candidates:
         raise OSError(f"{args.mac} resolves only to loopback or the rogue address")
+
+    for address in candidates:
+        try:
+            with socket.create_connection((address, CLOUD_PORT), timeout=3):
+                return address
+        except OSError:
+            continue
+
+    # None answered. Return the first so preflight can report the real problem
+    # -- the cloud is not running -- rather than a resolution error.
     return candidates[0]
 
 
@@ -278,7 +310,9 @@ def write_address_map(args) -> str:
     if args.replay:
         cloud_ip, rogue_ip = REPLAY_CLOUD_IP, REPLAY_ROGUE_IP
     else:
-        cloud_ip, rogue_ip = resolve_cloud_address(args), args.rogue
+        cloud_ip = resolve_cloud_address(args)
+        rogue_ip = args.rogue or derive_rogue_address(cloud_ip)
+        args.rogue = rogue_ip
 
     path = os.path.join(REPO, args.asn_map)
     with open(path, "w") as handle:
@@ -348,8 +382,11 @@ def preflight(args) -> bool:
         pass
     ok &= verdict(rogue_open, f"rogue endpoint reachable at {args.rogue}:{CLOUD_PORT}")
     if not rogue_open:
-        print(f"{DIM}    On your Mac: sudo ifconfig en0 alias {args.rogue} "
-              f"255.255.252.0{RESET}")
+        print(f"{DIM}    On your Mac, add the alias for THIS network:{RESET}")
+        print(f"{DIM}      sudo ifconfig en0 alias {args.rogue} 255.255.255.0{RESET}")
+        print(f"{DIM}    If you have changed networks, remove the old one first:{RESET}")
+        print(f"{DIM}      ifconfig en0 | grep 'inet ' "
+              f"# then: sudo ifconfig en0 -alias <old address>{RESET}")
 
     if not args.replay:
         from collectors import rf_live
@@ -583,8 +620,10 @@ def main() -> int:
     parser.add_argument("--mac", required=True,
                         help="your Mac's hostname or address -- prefer the .local name, "
                              "since DHCP moves addresses")
-    parser.add_argument("--rogue", default="192.168.8.250",
-                        help="the unauthorised endpoint (the alias on your Mac)")
+    parser.add_argument("--rogue", default=None,
+                        help="the unauthorised endpoint (an alias on your Mac). "
+                             "Derived from the cloud's subnet if not given, so "
+                             "the demo survives changing networks.")
     parser.add_argument("--interface", default="wlan0")
     parser.add_argument("--asn-map", default="demo/asn_map.json")
     parser.add_argument("--baseline", default="demo/baseline.json")
