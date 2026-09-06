@@ -46,6 +46,28 @@ monitor_status: dict[str, dict] = {}
 # State
 # --------------------------------------------------------------------------
 
+def primary_address() -> str:
+    """This machine's address on the route to everything else.
+
+    Opening a UDP socket toward an outside address and reading back the local
+    end reveals which interface the kernel would actually use. Nothing is sent.
+
+    This exists because a monitor on another machine cannot work it out. The
+    hostname resolves to every address on the interface -- including aliases
+    added for the demo -- and the vendor cloud binds 0.0.0.0, so every one of
+    them answers. Only this host knows which is its real address, so it says so.
+    """
+    import socket
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(("192.0.2.1", 9))       # TEST-NET-1, never routed
+        return probe.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        probe.close()
+
+
 def _lane_state(source: str) -> dict:
     """Current condition of one collector: offline, alarm, or quiet."""
     status = monitor_status.get(source)
@@ -598,6 +620,10 @@ class AlertHandler(BaseHTTPRequestHandler):
         """Serve the dashboard, its state, or the raw alert list."""
         if self.path.startswith("/state.json"):
             body = json.dumps(_snapshot()).encode("utf-8")
+            self._respond(200, body, "application/json")
+            return
+        if self.path.startswith("/whoami"):
+            body = json.dumps({"primary": primary_address()}).encode("utf-8")
             self._respond(200, body, "application/json")
             return
         if self.path.startswith("/alerts.json"):

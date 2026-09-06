@@ -260,42 +260,42 @@ def derive_rogue_address(cloud_ip: str) -> str:
 
 
 def resolve_cloud_address(args) -> str:
-    """Find the Mac's authorised address by asking which one actually answers.
+    """Ask the dashboard host which address is really its own.
 
-    Resolving the .local name is not enough. Bonjour advertises every address
-    on the interface -- loopback, the real one, and any alias, including one
-    left behind from a network you were on hours ago. Picking the first is a
-    coin flip, and picking a stale alias produces a confident, wrong answer.
+    Guessing does not work, and both ways of guessing fail differently:
 
-    So each candidate is tried on the cloud port and the first that connects
-    wins. That is the only definition that matters: the authorised cloud is the
-    address this machine can actually reach it on.
+    By name -- the hostname resolves to every address on the interface,
+    including aliases left over from a previous network, in no useful order.
+
+    By probing -- the vendor cloud binds 0.0.0.0, so it answers on the real
+    address AND on the rogue alias. "Whichever answers" happily picks the
+    rogue and then aims the demo's normal traffic at it.
+
+    The dashboard runs on that machine and can simply look. Falling back to the
+    first non-loopback candidate keeps this working against an older dashboard.
     """
     import socket
+
+    try:
+        with urllib.request.urlopen(f"{dashboard_url(args.mac)}/whoami",
+                                    timeout=DASHBOARD_TIMEOUT_S) as response:
+            primary = json.load(response).get("primary")
+        if primary and not primary.startswith("127."):
+            return primary
+    except (urllib.error.URLError, OSError, ValueError):
+        pass
 
     candidates = []
     for _family, _type, _proto, _canon, sockaddr in socket.getaddrinfo(
             args.mac, None, socket.AF_INET):
         address = sockaddr[0]
-        if address.startswith("127."):
-            continue
-        if address == getattr(args, "rogue", None):
+        if address.startswith("127.") or address == getattr(args, "rogue", None):
             continue
         if address not in candidates:
             candidates.append(address)
 
     if not candidates:
         raise OSError(f"{args.mac} resolves only to loopback or the rogue address")
-
-    for address in candidates:
-        try:
-            with socket.create_connection((address, CLOUD_PORT), timeout=3):
-                return address
-        except OSError:
-            continue
-
-    # None answered. Return the first so preflight can report the real problem
-    # -- the cloud is not running -- rather than a resolution error.
     return candidates[0]
 
 
