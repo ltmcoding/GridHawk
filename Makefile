@@ -1,7 +1,7 @@
 SEEDS ?= 4711 1009 2 77 314 1618 2718 8080 9001 13 555 42
 PY    ?= python3
 
-.PHONY: help scenarios detect score rf test clean cloud replay dashboard
+.PHONY: help scenarios detect score rf test clean cloud replay dashboard demo demo-rehearse
 help:
 	@echo "make scenarios   generate scenarios + sealed manifests"
 	@echo "make detect      run the detector over each replay"
@@ -11,6 +11,7 @@ help:
 	@echo "make cloud       start the fake vendor cloud (foreground)"
 	@echo "make replay      drive real TLS sessions at the cloud (needs 'make cloud')"
 	@echo "make dashboard   run the alert receiver + dashboard (see docs/DEMO.md)"
+	@echo "make demo-rehearse  walk the whole demo on recorded data, no hardware"
 	@echo "make fallback    regenerate the recorded demo data (hardware-free)"
 	@echo "make air-check   check the SDR against real air (needs hardware)"
 
@@ -53,3 +54,6 @@ fallback:
 
 air-check:
 	@$(PY) demo/rf_check.py
+
+demo-rehearse:
+	@$(PY) demo/run_demo.py --mac 127.0.0.1 --replay --skip-preflight

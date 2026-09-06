@@ -221,12 +221,14 @@ def print_window(window_number: int, observations, findings) -> None:
 
 def monitor(source: CaptureSource, asn_lookup, port: int,
             maintenance_windows, inventory: Inventory | None,
-            sink: AlertSink) -> int:
-    """Capture, analyse and alert until interrupted."""
+            sink: AlertSink, max_windows: int | None = None) -> int:
+    """Capture, analyse and alert until interrupted, or for a set number of windows."""
     window_number = 0
 
     try:
         while True:
+            if max_windows is not None and window_number >= max_windows:
+                break
             window_number += 1
             capture_path = source.next_window()
 
@@ -287,6 +289,9 @@ def main() -> int:
                         help="analyse a recorded pcap instead of capturing")
     parser.add_argument("--inventory", default="demo/inventory.json",
                         help="Layer 1 join: weights alerts by capacity at risk")
+    parser.add_argument("--max-windows", type=int, default=None,
+                        help="stop after this many capture windows instead of "
+                             "running until interrupted; lets a script drive the demo")
     args = parser.parse_args()
 
     source = CaptureSource(args.replay, args.interface, args.port, args.window)
@@ -319,8 +324,8 @@ def main() -> int:
     print("Ctrl-C to stop.\n")
 
     try:
-        return monitor(source, asn_lookup, args.port,
-                       maintenance_windows, inventory, sink)
+        return monitor(source, asn_lookup, args.port, maintenance_windows,
+                       inventory, sink, max_windows=args.max_windows)
     except CaptureFailed as error:
         print(error, file=sys.stderr)
         return 1

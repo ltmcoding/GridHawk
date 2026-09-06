@@ -228,7 +228,7 @@ def run_monitor(args) -> int:
     sweep_number = 0
 
     try:
-        for sweep in _sweep_source(args):
+        for sweep in _sweep_source(args, max_sweeps=args.max_sweeps):
             sweep_number += 1
             _replay_pace(args)
             observation, findings = analyse_sweep(
@@ -253,6 +253,9 @@ def run_monitor(args) -> int:
             sink.send_all(findings)
 
     except KeyboardInterrupt:
+        pass
+
+    if True:
         print(f"\nstopped after {sweep_number} sweeps; "
               f"{sink.sent_count} alert(s) delivered, {sink.failed_count} failed, "
               f"{sink.suppressed_count} suppressed as repeats")
@@ -271,7 +274,11 @@ def main() -> int:
     parser.add_argument("--integration", type=float, default=DEFAULT_INTEGRATION_S)
     parser.add_argument("--gain", default=rf_live.DEFAULT_GAIN_DB)
     parser.add_argument("--device", type=int, default=0)
-    parser.add_argument("--sweeps", type=int, default=DEFAULT_BASELINE_SWEEPS)
+    parser.add_argument("--sweeps", type=int, default=DEFAULT_BASELINE_SWEEPS,
+                        help="sweeps to capture when baselining")
+    parser.add_argument("--max-sweeps", type=int, default=None,
+                        help="stop after this many sweeps instead of running until "
+                             "interrupted; lets a script drive the demo")
     parser.add_argument("--band-name", default="ISM-433")
     parser.add_argument("--replay", default=None,
                         help="read sweeps from a recorded CSV instead of the radio")

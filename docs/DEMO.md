@@ -169,7 +169,37 @@ take would undo the credibility the rest of the project is built on.
 
 ## Running the demo
 
-### Start these and leave them running
+### The short version: one command
+
+Everything below can be driven by a single script that pauses between steps and
+waits for you to switch radios:
+
+```bash
+python3 demo/run_demo.py --mac Landons-MacBook-Pro-4.local
+```
+
+It checks the dashboard, the vendor cloud and the rogue endpoint are all
+reachable before starting, walks the six steps in order, tells you exactly which
+radio to switch and when, and reports what it expected against what it got at
+each step. A step that goes wrong is obvious at the time rather than something
+you notice later.
+
+**Use the `.local` name, not an IP.** DHCP moves addresses, and a pinned address
+fails silently -- alerts simply stop arriving with nothing on screen to say so.
+
+**Rehearse it first with no hardware at all:**
+
+```bash
+make demo-rehearse
+```
+
+Same script, same six steps, recorded data. Worth doing once so the ordering is
+familiar before anyone is watching.
+
+The rest of this document is what the script runs, if you would rather drive it
+by hand or need to debug a step.
+
+## Start these and leave them running
 
 **Computer A** — the vendor cloud:
 ```bash
